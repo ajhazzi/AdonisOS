@@ -9,7 +9,7 @@ export function readJson(req) {
     let body = "";
     req.on("data", (chunk) => {
       body += chunk;
-      if (body.length > 8_000_000) {
+      if (body.length > 18_000_000) {
         reject(new Error("Payload too large"));
         req.destroy();
       }

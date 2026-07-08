@@ -638,8 +638,13 @@ function renderProgress() {
     <div class="section-panel panel">
       <div class="section-head"><h2>ShapeScale Import</h2><span class="small">Weekly source of truth</span></div>
       <form id="shapescale-form">
-        <div class="field"><label>Paste ShapeScale Report Text</label><textarea name="reportText" class="large-textarea" placeholder="Open the ShapeScale PDF, select the report text, paste it here, then import."></textarea></div>
-        <p class="form-help">Imports scan date, body fat, lean mass, shoulders, waist, hips, biceps, thighs, neck, and calves. If weight is not printed, Adonis OS derives it from lean mass and body fat.</p>
+        <label class="file-drop">
+          <span>Upload ShapeScale PDF or Screenshot</span>
+          <small>Select the weekly PDF, or take a screenshot/photo of the report.</small>
+          <input name="scanFile" type="file" accept="application/pdf,image/*">
+        </label>
+        <div class="field" style="margin-top:12px"><label>Paste ShapeScale Report Text</label><textarea name="reportText" class="large-textarea" placeholder="Optional fallback if you copied report text."></textarea></div>
+        <p class="form-help">Imports scan date, body fat, lean mass, shoulders, waist, hips, biceps, thighs, neck, and calves. PDF/photo import uses the AI backend; pasted text uses the local parser first.</p>
         <button class="button primary" type="submit">Import ShapeScale Scan</button>
       </form>
     </div>
@@ -701,13 +706,30 @@ function saveProgress(formData) {
   showToast("Progress saved.");
 }
 
-function importShapeScale(formData) {
+async function importShapeScale(formData) {
   const text = String(formData.get("reportText") || "");
-  const scan = parseShapeScaleText(text);
+  const file = formData.get("scanFile");
+  let scan = text.trim() ? parseShapeScaleText(text) : null;
+
   if (!scan) {
-    showToast("Could not find ShapeScale measurements.");
-    return;
+    showToast("Reading ShapeScale scan...");
+    try {
+      const fileData = file && file.size ? await scanFileData(file) : "";
+      const data = await apiRequest("/api/shapescale-scan", {
+        method: "POST",
+        body: JSON.stringify({
+          fileData,
+          filename: file && file.size ? file.name : "",
+          reportText: text
+        })
+      });
+      scan = data.scan;
+    } catch (error) {
+      showToast(error.message || "Could not find ShapeScale measurements.");
+      return;
+    }
   }
+
   state.progressLogs = state.progressLogs.filter((item) => item.date !== scan.date);
   state.progressLogs.unshift(scan);
   state.progressLogs.sort((a, b) => b.date.localeCompare(a.date));
@@ -715,6 +737,21 @@ function importShapeScale(formData) {
   renderProgress();
   renderHome();
   showToast("ShapeScale scan imported.");
+}
+
+async function scanFileData(file) {
+  if (file.type.startsWith("image/")) return resizeImageFile(file);
+  if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) return fileToDataUrl(file);
+  throw new Error("Use a ShapeScale PDF or image file.");
+}
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
 }
 
 function parseShapeScaleText(rawText) {
