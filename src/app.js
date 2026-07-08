@@ -1,5 +1,6 @@
 const STORAGE_KEY = "adonis_os_state_v1";
 const CLOUD_PIN_KEY = "adonis_os_cloud_pin";
+const DEFAULT_PROGRAM_START_DATE = "2026-07-06";
 
 const icons = {
   menu: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>`,
@@ -114,7 +115,7 @@ function recovery(day, short, name, items) {
 const defaultState = {
   settings: {
     week: 1,
-    startDate: new Date().toISOString().slice(0, 10),
+    startDate: DEFAULT_PROGRAM_START_DATE,
     calorieTarget: 2700,
     proteinTarget: 200,
     carbTarget: 275,
@@ -273,6 +274,7 @@ function renderHome() {
   const latest = latestProgress();
   const previous = previousProgress();
   const today = todayWorkout();
+  const week = programWeek();
   const completedToday = hasWorkoutOnDate(today.id, todayIso());
   const ratio = ratioText(latest);
   const score = adonisScore(latest);
@@ -284,7 +286,7 @@ function renderHome() {
       <div class="hero-vignette"></div>
       <div class="mobile-hero-card">
         <div>
-          <span>Week ${state.settings.week} / 12</span>
+          <span>Week ${week} / 12</span>
           <b>${today.short}</b>
         </div>
         <button class="small-chip" data-action="start-today">${today.rest ? "Recovery" : "Start"}</button>
@@ -296,7 +298,7 @@ function renderHome() {
       </div>
       <div class="week-widget">
         <div class="eyebrow">Week</div>
-        <b>${state.settings.week} <span class="orange">/</span> 12</b>
+        <b>${week} <span class="orange">/</span> 12</b>
         <small>DAY ${programDay()}</small>
       </div>
       <div class="today-label"><b>${today.short}</b><span>Today's workout</span></div>
@@ -375,14 +377,15 @@ function dayCard(day, done) {
 
 function renderWorkouts() {
   const screen = byId("screen-workouts");
+  const week = programWeek();
   screen.innerHTML = `
     <div class="hero-card">
       <h1>12 Week Plan</h1>
       <p>Four focused 60-minute sessions. Recovery days protect the waist, joints, and nervous system.</p>
     </div>
     <div class="section-panel panel">
-      <div class="section-head"><h2>Week Selector</h2><span class="small">Current: Week ${state.settings.week}</span></div>
-      <div class="segmented">${Array.from({ length: 12 }, (_, index) => `<button data-week="${index + 1}" class="${state.settings.week === index + 1 ? "active" : ""}">W${index + 1}</button>`).join("")}</div>
+      <div class="section-head"><h2>Week Selector</h2><span class="small">Current: Week ${week} · Day ${programDay()}</span></div>
+      <div class="segmented">${Array.from({ length: 12 }, (_, index) => `<button data-week="${index + 1}" class="${week === index + 1 ? "active" : ""}">W${index + 1}</button>`).join("")}</div>
     </div>
     <div class="workout-list two-col">
       ${workouts.map((workout) => workout.rest ? recoveryCard(workout) : workoutCard(workout)).join("")}
@@ -1232,6 +1235,9 @@ function renderMore() {
     <div class="section-panel panel">
       <div class="section-head"><h2>Settings</h2><span class="small">MVP local data</span></div>
       <form id="settings-form">
+        <div class="field-grid one">
+          ${field("startDate", "Program Start Date", "date", state.settings.startDate || DEFAULT_PROGRAM_START_DATE)}
+        </div>
         <div class="field-grid">
           ${field("calorieTarget", "Calories", "number", state.settings.calorieTarget)}
           ${field("proteinTarget", "Protein", "number", state.settings.proteinTarget)}
@@ -1257,6 +1263,7 @@ function renderMore() {
 }
 
 function saveSettings(formData) {
+  state.settings.startDate = String(formData.get("startDate") || DEFAULT_PROGRAM_START_DATE);
   ["calorieTarget", "proteinTarget", "carbTarget", "fatTarget", "weeklyIncrease", "maintenanceGoal", "waistGuardrail"].forEach((key) => {
     state.settings[key] = Number(formData.get(key));
   });
@@ -1352,6 +1359,9 @@ function habitWeekTrend() {
 
 function setWeek(week) {
   state.settings.week = week;
+  const start = parseLocalDate(todayIso());
+  start.setDate(start.getDate() - ((week - 1) * 7));
+  state.settings.startDate = start.toISOString().slice(0, 10);
   saveState();
   renderWorkouts();
   renderHome();
@@ -1688,10 +1698,23 @@ function daysBetween(start, end) {
   return Math.abs((new Date(end) - new Date(start)) / 86400000);
 }
 
+function parseLocalDate(date) {
+  return new Date(`${date}T00:00:00`);
+}
+
+function programElapsedDays() {
+  const start = parseLocalDate(state.settings.startDate || DEFAULT_PROGRAM_START_DATE);
+  const today = parseLocalDate(todayIso());
+  const diff = Math.floor((today - start) / 86400000);
+  return Math.max(0, Math.min(83, diff));
+}
+
+function programWeek() {
+  return Math.floor(programElapsedDays() / 7) + 1;
+}
+
 function programDay() {
-  const start = new Date(state.settings.startDate);
-  const diff = Math.max(0, Math.floor((new Date(todayIso()) - start) / 86400000));
-  return (diff % 7) + 1;
+  return programElapsedDays() + 1;
 }
 
 function registerServiceWorker() {
