@@ -1158,6 +1158,7 @@ textarea:focus {
   color: #ff8b8b;
 }
 
+.habit-form,
 .habit-number-grid {
   display: grid;
   gap: 10px;
@@ -1212,8 +1213,12 @@ textarea:focus {
   font-weight: 900;
 }
 
+.section-head.compact {
+  margin-top: 4px;
+}
+
 .habit-save {
-  margin: 0;
+  margin: 2px 0 0;
 }
 
 .habit-check-grid {
@@ -1236,29 +1241,16 @@ textarea:focus {
   align-content: start;
 }
 
-.habit-toggle span {
+.habit-toggle input {
   width: 24px;
-  height: 24px;
-  border: 2px solid rgba(255, 255, 255, 0.24);
-  border-radius: 999px;
-  display: grid;
-  place-items: center;
-  color: #050505;
+  min-height: 24px;
+  accent-color: var(--orange);
 }
 
-.habit-toggle span svg {
-  width: 15px;
-  height: 15px;
-}
-
-.habit-toggle.done {
+.habit-toggle.done,
+.habit-toggle:has(input:checked) {
   border-color: rgba(255, 106, 0, 0.72);
   background: linear-gradient(145deg, rgba(255, 106, 0, 0.28), rgba(255, 255, 255, 0.04));
-}
-
-.habit-toggle.done span {
-  border-color: var(--orange);
-  background: var(--orange);
 }
 
 .habit-week {

@@ -212,7 +212,6 @@ function handleClick(event) {
   const removeFoodButton = event.target.closest("[data-remove-food]");
   const savedMealButton = event.target.closest("[data-add-saved-meal]");
   const removeSavedMealButton = event.target.closest("[data-remove-saved-meal]");
-  const habitButton = event.target.closest("[data-toggle-habit]");
 
   if (routeButton) route(routeButton.dataset.route);
   if (workoutButton) openWorkout(workoutButton.dataset.workoutId);
@@ -221,8 +220,6 @@ function handleClick(event) {
   if (removeFoodButton) removeFood(Number(removeFoodButton.dataset.removeFood));
   if (savedMealButton) addSavedMealToToday(savedMealButton.dataset.addSavedMeal);
   if (removeSavedMealButton) removeSavedMeal(removeSavedMealButton.dataset.removeSavedMeal);
-  if (habitButton) toggleHabit(habitButton.dataset.toggleHabit);
-
   if (!actionButton) return;
   const action = actionButton.dataset.action;
   if (action === "start-today") startWorkout(todayWorkout().id);
@@ -1277,7 +1274,8 @@ function habitPanel(date) {
   const numberHabits = habits.filter((habit) => habit.type === "number");
   const checkHabits = habits.filter((habit) => habit.type === "check");
   return `
-    <form id="habit-form" class="habit-number-grid">
+    <form id="habit-form" class="habit-form">
+      <div class="habit-number-grid">
       ${numberHabits.map((habit) => `
         <div class="habit-card">
           <div>
@@ -1291,20 +1289,22 @@ function habitPanel(date) {
           <small>Target ${habit.target}${habit.unit}</small>
         </div>
       `).join("")}
-      <button class="button secondary habit-save" type="submit">Save Hydration & Sleep</button>
+      </div>
+      <div class="section-head compact"><h2>Supplements</h2><span class="small">${checkHabits.filter((habit) => log[habit.id]).length}/${checkHabits.length} done</span></div>
+      <div class="habit-check-grid">
+        ${checkHabits.map((habit) => {
+          const done = Boolean(log[habit.id]);
+          return `
+            <label class="habit-toggle ${done ? "done" : ""}">
+              <input name="${habit.id}" type="checkbox" ${done ? "checked" : ""}>
+              <strong>${habit.name}</strong>
+              <small>${habit.note}</small>
+            </label>
+          `;
+        }).join("")}
+      </div>
+      <button class="button secondary habit-save" type="submit">Save Habits</button>
     </form>
-    <div class="habit-check-grid">
-      ${checkHabits.map((habit) => {
-        const done = Boolean(log[habit.id]);
-        return `
-          <button class="habit-toggle ${done ? "done" : ""}" data-toggle-habit="${habit.id}">
-            <span>${done ? icons.check : ""}</span>
-            <strong>${habit.name}</strong>
-            <small>${habit.note}</small>
-          </button>
-        `;
-      }).join("")}
-    </div>
   `;
 }
 
@@ -1315,20 +1315,13 @@ function saveHabitNumbers(formData) {
     const value = formData.get(habit.id);
     log[habit.id] = value === "" ? "" : Number(value);
   });
+  habits.filter((habit) => habit.type === "check").forEach((habit) => {
+    log[habit.id] = formData.has(habit.id);
+  });
   state.habitLogs[date] = log;
   saveState();
   renderHome();
   showToast("Habits updated.");
-}
-
-function toggleHabit(habitId) {
-  const date = todayIso();
-  const log = getHabitLog(date);
-  log[habitId] = !log[habitId];
-  state.habitLogs[date] = log;
-  saveState();
-  if (currentScreen === "home") renderHome();
-  if (currentScreen === "more") renderMore();
 }
 
 function getHabitLog(date) {
