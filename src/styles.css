@@ -125,6 +125,11 @@ button {
   background: #111;
 }
 
+.mobile-hero-card,
+.mobile-goals {
+  display: none;
+}
+
 .hero-img {
   position: absolute;
   inset: 0;
@@ -1250,37 +1255,95 @@ textarea:focus {
   text-align: center;
 }
 
-@media (max-width: 420px) {
+@media (max-width: 759px) {
+  .topbar {
+    grid-template-columns: 44px 1fr 44px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid rgba(255, 106, 0, 0.12);
+  }
+
+  .brand {
+    font-size: clamp(2rem, 12vw, 3.35rem);
+  }
+
   .home-hero {
-    min-height: 610px;
+    min-height: min(62svh, 520px);
+    margin-top: 0;
+    margin-bottom: 12px;
+    border-bottom: 0;
+    border-radius: 0 0 10px 10px;
+    isolation: isolate;
   }
 
-  .hero-copy {
-    max-width: 160px;
+  .hero-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: 52% 42%;
+    transform: scale(1.78);
+    transform-origin: 52% 43%;
+    filter: saturate(1.08) contrast(1.05) brightness(0.68);
   }
 
-  .week-widget {
-    width: 104px;
-    padding: 14px;
+  .hero-vignette {
+    background:
+      linear-gradient(180deg, rgba(0, 0, 0, 0.5) 0%, rgba(0, 0, 0, 0.02) 30%, rgba(0, 0, 0, 0.28) 70%, #050505 100%),
+      linear-gradient(90deg, rgba(0, 0, 0, 0.46), transparent 42%, rgba(0, 0, 0, 0.42));
   }
 
-  .today-label {
-    top: 235px;
-    right: 18px;
-  }
-
+  .hero-copy,
+  .week-widget,
+  .today-label,
+  .measurement-line,
   .goals-panel {
-    width: 150px;
-    bottom: 88px;
-    padding: 12px;
+    display: none;
   }
 
-  .measurement-line.shoulders {
-    top: 304px;
+  .mobile-hero-card {
+    position: absolute;
+    left: 16px;
+    right: 16px;
+    bottom: 16px;
+    z-index: 2;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 12px;
+    align-items: center;
+    padding: 13px;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius);
+    background: rgba(10, 10, 10, 0.74);
+    backdrop-filter: blur(12px);
   }
 
-  .measurement-line.waist {
-    top: 451px;
+  .mobile-hero-card span {
+    display: block;
+    color: var(--orange);
+    font-size: 0.72rem;
+    font-weight: 900;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .mobile-hero-card b {
+    display: block;
+    margin-top: 3px;
+    font-family: Impact, Haettenschweiler, "Arial Narrow Bold", sans-serif;
+    font-size: 1.85rem;
+    line-height: 0.95;
+    text-transform: uppercase;
+  }
+
+  .mobile-goals {
+    display: block;
+  }
+
+  .mobile-goals .stats-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .mobile-goals .stat-card {
+    min-height: 106px;
   }
 
   .week-grid {
@@ -1290,6 +1353,28 @@ textarea:focus {
   .day-card {
     min-height: 104px;
     padding: 10px 4px;
+  }
+
+  .mission {
+    grid-template-columns: 54px 1fr;
+  }
+
+  .mission-targets {
+    grid-column: 1 / -1;
+    text-align: left;
+    font-size: 0.95rem;
+  }
+}
+
+@media (max-width: 420px) {
+  .home-hero {
+    min-height: min(58svh, 480px);
+  }
+
+  .hero-img {
+    transform: scale(1.95);
+    object-position: 52% 43%;
+    transform-origin: 52% 44%;
   }
 }
 

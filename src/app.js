@@ -276,6 +276,13 @@ function renderHome() {
     <div class="home-hero">
       <img class="hero-img" src="/adonis-hero.png" alt="Adonis OS physique dashboard">
       <div class="hero-vignette"></div>
+      <div class="mobile-hero-card">
+        <div>
+          <span>Week ${state.settings.week} / 12</span>
+          <b>${today.short}</b>
+        </div>
+        <button class="small-chip" data-action="start-today">${today.rest ? "Recovery" : "Start"}</button>
+      </div>
       <div class="hero-copy">
         <div class="eyebrow">Project Adonis</div>
         <h1>12 Week<br><span class="orange">Transformation</span></h1>
@@ -296,6 +303,15 @@ function renderHome() {
         ${goalRow(icons.dumbbell, "Lean Mass", "150+ lbs")}
         ${goalRow(icons.tape, "Waist", "33-33.25\"")}
         ${goalRow(icons.home, "Shoulders", "48\"+")}
+      </div>
+    </div>
+    <div class="mobile-goals section-panel panel">
+      <div class="section-head"><h2>Goals</h2><span class="small">Project Adonis</span></div>
+      <div class="stats-grid">
+        ${statCard("Weight", "180-182 lbs", "Target range")}
+        ${statCard("Body Fat", "10-11%", "Lean finish")}
+        ${statCard("Lean Mass", "150+ lbs", "Build phase")}
+        ${statCard("Waist / Shoulders", "33\" / 48\"+", "Ratio work")}
       </div>
     </div>
     <div class="section-panel panel">
