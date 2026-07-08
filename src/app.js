@@ -129,6 +129,7 @@ const defaultState = {
     entryDaysAgo(1, { weight: 180.0, waist: 33.4, shoulders: 47.2, arms: 15.6, biceps: 15.6, hips: 40.1, thighs: 23.1, neck: 16.1, calves: 15.1, bodyFat: 11.1, leanMass: 160.0, source: "Manual", notes: "On track. Waist moving right." })
   ],
   nutritionLogs: {},
+  savedMeals: [],
   habitLogs: {},
   coachMessages: [
     {
@@ -208,6 +209,8 @@ function handleClick(event) {
   const weekButton = event.target.closest("[data-week]");
   const logButton = event.target.closest("[data-log-set]");
   const removeFoodButton = event.target.closest("[data-remove-food]");
+  const savedMealButton = event.target.closest("[data-add-saved-meal]");
+  const removeSavedMealButton = event.target.closest("[data-remove-saved-meal]");
   const habitButton = event.target.closest("[data-toggle-habit]");
 
   if (routeButton) route(routeButton.dataset.route);
@@ -215,6 +218,8 @@ function handleClick(event) {
   if (weekButton) setWeek(Number(weekButton.dataset.week));
   if (logButton) openSetModal(logButton.dataset.logSet);
   if (removeFoodButton) removeFood(Number(removeFoodButton.dataset.removeFood));
+  if (savedMealButton) addSavedMealToToday(savedMealButton.dataset.addSavedMeal);
+  if (removeSavedMealButton) removeSavedMeal(removeSavedMealButton.dataset.removeSavedMeal);
   if (habitButton) toggleHabit(habitButton.dataset.toggleHabit);
 
   if (!actionButton) return;
@@ -241,6 +246,7 @@ function handleSubmit(event) {
   if (form.id === "progress-form") saveProgress(new FormData(form));
   if (form.id === "shapescale-form") importShapeScale(new FormData(form));
   if (form.id === "food-form") saveFood(new FormData(form));
+  if (form.id === "meal-label-form") scanMealLabel(new FormData(form));
   if (form.id === "settings-form") saveSettings(new FormData(form));
   if (form.id === "cloud-form") saveCloudSettings(new FormData(form));
   if (form.id === "habit-form") saveHabitNumbers(new FormData(form));
@@ -773,6 +779,7 @@ function round1(value) {
 function renderNutrition() {
   const date = todayIso();
   const foods = state.nutritionLogs[date] || [];
+  const savedMeals = state.savedMeals || [];
   const totals = macroTotals(foods);
   const targets = state.settings;
   byId("screen-nutrition").innerHTML = `
@@ -797,6 +804,14 @@ function renderNutrition() {
     </div>
     <div class="section-panel panel">
       <div class="section-head"><h2>Add Food</h2><span class="small">${date}</span></div>
+      <form id="meal-label-form" class="label-scan-form">
+        <label class="file-drop">
+          <span>Scan Meal-Prep Label</span>
+          <small>Snap the lid or nutrition sticker and let AI fill the macros.</small>
+          <input name="labelPhoto" type="file" accept="image/*" capture="environment" required>
+        </label>
+        <button class="button secondary" type="submit">Read Label</button>
+      </form>
       <form id="food-form">
         <div class="field-grid one">${field("name", "Food Name", "text", "")}</div>
         <div class="field-grid">
@@ -805,8 +820,16 @@ function renderNutrition() {
           ${field("carbs", "Carbs", "number", "")}
           ${field("fat", "Fat", "number", "")}
         </div>
+        <label class="check-row">
+          <input name="saveMeal" type="checkbox">
+          <span>Save this meal for one-tap logging</span>
+        </label>
         <button class="button primary" type="submit">Add Food</button>
       </form>
+    </div>
+    <div class="section-panel panel">
+      <div class="section-head"><h2>Saved Meals</h2><span class="small">${savedMeals.length} ready</span></div>
+      <div class="saved-meal-grid">${savedMeals.length ? savedMeals.map(savedMealCard).join("") : `<div class="empty">Save frequent meals here. One tap logs the macros next time.</div>`}</div>
     </div>
     <div class="section-panel panel">
       <div class="section-head"><h2>Today's Food</h2><span class="small">${foods.length} items</span></div>
@@ -836,17 +859,106 @@ function renderNutrition() {
 
 function saveFood(formData) {
   const date = todayIso();
+  const meal = mealFromForm(formData);
+  if (!meal.name) {
+    showToast("Meal needs a name.");
+    return;
+  }
   state.nutritionLogs[date] = state.nutritionLogs[date] || [];
-  state.nutritionLogs[date].push({
-    name: String(formData.get("name")).trim(),
-    calories: Number(formData.get("calories")),
-    protein: Number(formData.get("protein")),
-    carbs: Number(formData.get("carbs")),
-    fat: Number(formData.get("fat"))
-  });
+  state.nutritionLogs[date].push(meal);
+  if (formData.get("saveMeal")) saveMealTemplate(meal);
   saveState();
   renderNutrition();
-  showToast("Food added.");
+  showToast(formData.get("saveMeal") ? "Food added and meal saved." : "Food added.");
+}
+
+function mealFromForm(formData) {
+  return cleanMeal({
+    name: formData.get("name"),
+    calories: formData.get("calories"),
+    protein: formData.get("protein"),
+    carbs: formData.get("carbs"),
+    fat: formData.get("fat")
+  });
+}
+
+function cleanMeal(meal) {
+  return {
+    name: String(meal.name || "").trim(),
+    calories: Math.round(Number(meal.calories || 0)),
+    protein: roundMacro(meal.protein),
+    carbs: roundMacro(meal.carbs),
+    fat: roundMacro(meal.fat)
+  };
+}
+
+function roundMacro(value) {
+  return Math.round(Number(value || 0) * 10) / 10;
+}
+
+function saveMealTemplate(meal) {
+  state.savedMeals = state.savedMeals || [];
+  const savedMeal = { ...meal, id: mealId(meal), updatedAt: new Date().toISOString() };
+  const existingIndex = state.savedMeals.findIndex((item) => item.id === savedMeal.id);
+  if (existingIndex >= 0) {
+    state.savedMeals[existingIndex] = savedMeal;
+  } else {
+    state.savedMeals.unshift(savedMeal);
+  }
+  state.savedMeals = state.savedMeals.slice(0, 40);
+}
+
+function mealId(meal) {
+  return String(meal.name || "meal").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || `meal-${Date.now()}`;
+}
+
+function addSavedMealToToday(id) {
+  const meal = (state.savedMeals || []).find((item) => item.id === id);
+  if (!meal) return;
+  const date = todayIso();
+  state.nutritionLogs[date] = state.nutritionLogs[date] || [];
+  state.nutritionLogs[date].push(cleanMeal(meal));
+  saveState();
+  renderNutrition();
+  showToast(`${meal.name} added.`);
+}
+
+function removeSavedMeal(id) {
+  state.savedMeals = (state.savedMeals || []).filter((meal) => meal.id !== id);
+  saveState();
+  renderNutrition();
+  showToast("Saved meal removed.");
+}
+
+async function scanMealLabel(formData) {
+  const photo = formData.get("labelPhoto");
+  if (!photo || !photo.size) {
+    showToast("Add a label photo first.");
+    return;
+  }
+
+  showToast("Reading label...");
+  try {
+    const image = await resizeImageFile(photo);
+    const data = await apiRequest("/api/meal-label", {
+      method: "POST",
+      body: JSON.stringify({ image })
+    });
+    populateFoodForm(data.meal || data);
+    showToast("Label read. Check it, then add food.");
+  } catch (error) {
+    showToast(error.message || "Label scan failed");
+  }
+}
+
+function populateFoodForm(meal) {
+  const clean = cleanMeal(meal || {});
+  const form = byId("food-form");
+  if (!form) return;
+  ["name", "calories", "protein", "carbs", "fat"].forEach((key) => {
+    const input = form.elements[key];
+    if (input) input.value = clean[key] || "";
+  });
 }
 
 function removeFood(index) {
@@ -858,11 +970,15 @@ function removeFood(index) {
 
 function seedFood() {
   const date = todayIso();
-  state.nutritionLogs[date] = [
+  const sampleMeals = [
     { name: "Greek yogurt, berries, whey", calories: 520, protein: 58, carbs: 54, fat: 8 },
     { name: "Chicken rice bowl", calories: 760, protein: 62, carbs: 86, fat: 18 },
     { name: "Steak, potatoes, salad", calories: 840, protein: 64, carbs: 74, fat: 28 }
   ];
+  state.nutritionLogs[date] = sampleMeals;
+  state.savedMeals = [...sampleMeals.map((meal) => ({ ...meal, id: mealId(meal), updatedAt: new Date().toISOString() })), ...(state.savedMeals || [])]
+    .filter((meal, index, meals) => meals.findIndex((item) => item.id === meal.id) === index)
+    .slice(0, 40);
   saveState();
   renderNutrition();
 }
@@ -1288,6 +1404,18 @@ function foodRow(food, index) {
   return `<div class="food-row"><div><strong>${food.name}</strong><div class="meta">${food.calories} kcal · P ${food.protein}g · C ${food.carbs}g · F ${food.fat}g</div></div><button class="small-chip" data-remove-food="${index}">Remove</button></div>`;
 }
 
+function savedMealCard(meal) {
+  return `
+    <div class="saved-meal-card">
+      <button class="saved-meal-main" data-add-saved-meal="${escapeAttribute(meal.id)}">
+        <strong>${escapeHtml(meal.name)}</strong>
+        <span>${meal.calories} kcal · P ${meal.protein}g · C ${meal.carbs}g · F ${meal.fat}g</span>
+      </button>
+      <button class="icon-mini danger" data-remove-saved-meal="${escapeAttribute(meal.id)}" aria-label="Remove ${escapeAttribute(meal.name)}">×</button>
+    </div>
+  `;
+}
+
 function historyRow(log) {
   return `<div class="history-row"><strong>${log.workoutName}</strong><div class="meta">${new Date(log.date).toLocaleDateString()} · ${secondsToClock(log.durationSec)} · ${log.sets.length} sets</div></div>`;
 }
@@ -1396,6 +1524,7 @@ function loadState() {
       ...structuredClone(defaultState),
       ...saved,
       settings: { ...defaultState.settings, ...(saved.settings || {}) },
+      savedMeals: saved.savedMeals || [],
       habitLogs: saved.habitLogs || {},
       coachMessages: saved.coachMessages?.length ? saved.coachMessages : structuredClone(defaultState.coachMessages)
     };
@@ -1495,6 +1624,7 @@ function hydrateState(nextState) {
     ...structuredClone(defaultState),
     ...nextState,
     settings: { ...defaultState.settings, ...(nextState.settings || {}) },
+    savedMeals: nextState.savedMeals || [],
     habitLogs: nextState.habitLogs || {},
     coachMessages: nextState.coachMessages?.length ? nextState.coachMessages : structuredClone(defaultState.coachMessages)
   };
