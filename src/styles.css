@@ -1267,83 +1267,154 @@ textarea:focus {
   }
 
   .home-hero {
-    min-height: auto;
+    min-height: clamp(610px, 76svh, 720px);
     margin-top: 0;
-    margin-bottom: 12px;
-    padding: 16px;
-    border: 1px solid var(--line);
-    border-radius: var(--radius);
-    background:
-      linear-gradient(135deg, rgba(255, 106, 0, 0.18), transparent 42%),
-      linear-gradient(160deg, #171717, #080808);
-    box-shadow: 0 18px 55px rgba(0, 0, 0, 0.34);
+    margin-bottom: 14px;
+    padding: 0;
+    border: 0;
+    border-bottom: 1px solid var(--line);
+    border-radius: 0 0 10px 10px;
+    background: #050505;
+    box-shadow: none;
   }
 
   .hero-img,
   .hero-vignette {
+    display: block;
+  }
+
+  .hero-img {
+    object-position: 50% 14%;
+    filter: saturate(1.08) contrast(1.04) brightness(0.76);
+  }
+
+  .hero-vignette {
+    background:
+      linear-gradient(180deg, rgba(0, 0, 0, 0.68) 0%, rgba(0, 0, 0, 0.18) 24%, rgba(0, 0, 0, 0.34) 68%, #050505 100%),
+      linear-gradient(90deg, rgba(0, 0, 0, 0.72), transparent 52%, rgba(0, 0, 0, 0.62));
+  }
+
+  .mobile-hero-card,
+  .mobile-goals {
     display: none;
   }
 
-  .hero-copy,
-  .week-widget,
-  .today-label,
-  .measurement-line,
-  .goals-panel {
-    display: none;
-  }
-
-  .mobile-hero-card {
-    display: grid;
-    grid-template-columns: 1fr auto;
-    gap: 12px;
-    align-items: center;
-    padding: 0;
-    border: 0;
-    border-radius: var(--radius);
-    background: transparent;
-    backdrop-filter: none;
-  }
-
-  .mobile-hero-card span {
+  .hero-copy {
     display: block;
-    color: var(--orange);
-    font-size: 0.72rem;
-    font-weight: 900;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    top: 28px;
+    left: 16px;
+    max-width: calc(100% - 28px);
   }
 
-  .mobile-hero-card b {
-    display: block;
-    margin-top: 6px;
-    font-family: Impact, Haettenschweiler, "Arial Narrow Bold", sans-serif;
-    font-size: 2.35rem;
-    line-height: 0.95;
-    text-transform: uppercase;
+  .hero-copy h1 {
+    margin-top: 7px;
+    font-size: clamp(2.08rem, 9.4vw, 2.7rem);
+    line-height: 0.92;
   }
 
-  .mobile-hero-card::after {
-    content: "180-182 lb target · 33 in waist · 48 in shoulders";
-    grid-column: 1 / -1;
-    display: block;
-    margin-top: 10px;
-    padding-top: 12px;
-    border-top: 1px solid rgba(255, 255, 255, 0.12);
-    color: var(--muted);
-    font-size: 0.82rem;
+  .quote {
+    margin-top: 18px;
+    font-size: 0.78rem;
     line-height: 1.35;
   }
 
-  .mobile-goals {
+  .quote-mark {
+    font-size: 1.7rem;
+  }
+
+  .signature {
+    font-size: 1.16rem;
+  }
+
+  .week-widget {
     display: block;
+    top: 32px;
+    right: 14px;
+    width: 96px;
+    padding: 12px;
+    border-radius: 8px;
   }
 
-  .mobile-goals .stats-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .week-widget b {
+    font-size: 1.75rem;
   }
 
-  .mobile-goals .stat-card {
-    min-height: 106px;
+  .week-widget small {
+    font-size: 0.68rem;
+  }
+
+  .today-label {
+    display: block;
+    top: 204px;
+    right: 18px;
+    max-width: 126px;
+  }
+
+  .today-label b {
+    font-size: 1.65rem;
+  }
+
+  .today-label span {
+    font-size: 0.66rem;
+  }
+
+  .measurement-line {
+    display: block;
+    height: 2px;
+  }
+
+  .measurement-line.shoulders {
+    top: 300px;
+    left: 25%;
+    right: 20%;
+  }
+
+  .measurement-line.waist {
+    top: 432px;
+    left: 36%;
+    right: 31%;
+  }
+
+  .line-label {
+    top: -25px;
+    font-size: 0.66rem;
+  }
+
+  .line-value {
+    top: 4px;
+    font-size: 1.72rem;
+  }
+
+  .goals-panel {
+    display: block;
+    left: 14px;
+    bottom: 24px;
+    width: 152px;
+    padding: 12px;
+    border-radius: 8px;
+  }
+
+  .goals-panel h2 {
+    margin-bottom: 8px;
+    font-size: 1.08rem;
+  }
+
+  .goal-row {
+    grid-template-columns: 26px 1fr;
+    gap: 8px;
+    padding: 6px 0;
+  }
+
+  .goal-icon {
+    font-size: 1.12rem;
+  }
+
+  .goal-row span {
+    font-size: 0.58rem;
+  }
+
+  .goal-row b {
+    font-size: 0.72rem;
   }
 
   .week-grid {
@@ -1368,7 +1439,44 @@ textarea:focus {
 
 @media (max-width: 420px) {
   .home-hero {
-    padding: 14px;
+    min-height: 616px;
+  }
+
+  .hero-copy {
+    top: 24px;
+    left: 14px;
+    max-width: calc(100% - 26px);
+  }
+
+  .week-widget {
+    right: 12px;
+    width: 88px;
+  }
+
+  .today-label {
+    top: 198px;
+    right: 14px;
+  }
+
+  .measurement-line.shoulders {
+    top: 292px;
+    left: 27%;
+    right: 17%;
+  }
+
+  .measurement-line.waist {
+    top: 420px;
+    left: 38%;
+    right: 28%;
+  }
+
+  .goals-panel {
+    left: 12px;
+    width: 144px;
+  }
+
+  .goal-row b {
+    font-size: 0.68rem;
   }
 }
 

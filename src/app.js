@@ -274,7 +274,7 @@ function renderHome() {
 
   screen.innerHTML = `
     <div class="home-hero">
-      <img class="hero-img" src="/adonis-hero.png" alt="Adonis OS physique dashboard">
+      <img class="hero-img" src="/adonis-hero-clean.png" alt="Adonis OS physique target">
       <div class="hero-vignette"></div>
       <div class="mobile-hero-card">
         <div>
