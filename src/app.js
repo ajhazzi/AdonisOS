@@ -125,9 +125,14 @@ const defaultState = {
     waistGuardrail: 34
   },
   workoutLogs: [],
+  exerciseHistory: {},
   progressLogs: [
     entryDaysAgo(8, { weight: 181.2, waist: 33.7, shoulders: 47.0, arms: 15.4, biceps: 15.4, hips: 40.0, thighs: 23.0, neck: 16.0, calves: 15.0, bodyFat: 11.6, leanMass: 160.2, source: "Manual", notes: "Baseline check." }),
     entryDaysAgo(1, { weight: 180.0, waist: 33.4, shoulders: 47.2, arms: 15.6, biceps: 15.6, hips: 40.1, thighs: 23.1, neck: 16.1, calves: 15.1, bodyFat: 11.1, leanMass: 160.0, source: "Manual", notes: "On track. Waist moving right." })
+  ],
+  morningWeights: [
+    entryDaysAgo(8, { weight: 181.2, notes: "Baseline morning weight." }),
+    entryDaysAgo(1, { weight: 180.0, notes: "Morning weigh-in." })
   ],
   nutritionLogs: {},
   savedMeals: [],
@@ -209,6 +214,7 @@ function handleClick(event) {
   const workoutButton = event.target.closest("[data-workout-id]");
   const weekButton = event.target.closest("[data-week]");
   const logButton = event.target.closest("[data-log-set]");
+  const editSetButton = event.target.closest("[data-edit-set]");
   const removeFoodButton = event.target.closest("[data-remove-food]");
   const savedMealButton = event.target.closest("[data-add-saved-meal]");
   const removeSavedMealButton = event.target.closest("[data-remove-saved-meal]");
@@ -217,6 +223,7 @@ function handleClick(event) {
   if (workoutButton) openWorkout(workoutButton.dataset.workoutId);
   if (weekButton) setWeek(Number(weekButton.dataset.week));
   if (logButton) openSetModal(logButton.dataset.logSet);
+  if (editSetButton) openSetModal(editSetButton.dataset.exerciseId, Number(editSetButton.dataset.editSet));
   if (removeFoodButton) removeFood(Number(removeFoodButton.dataset.removeFood));
   if (savedMealButton) addSavedMealToToday(savedMealButton.dataset.addSavedMeal);
   if (removeSavedMealButton) removeSavedMeal(removeSavedMealButton.dataset.removeSavedMeal);
@@ -240,7 +247,10 @@ function handleClick(event) {
 function handleSubmit(event) {
   event.preventDefault();
   const form = event.target;
-  if (form.id === "set-form") saveSet(new FormData(form));
+  if (form.id === "set-form") {
+    const setData = event.submitter ? new FormData(form, event.submitter) : new FormData(form);
+    saveSet(setData);
+  }
   if (form.id === "progress-form") saveProgress(new FormData(form));
   if (form.id === "shapescale-form") importShapeScale(new FormData(form));
   if (form.id === "food-form") saveFood(new FormData(form));
@@ -270,6 +280,8 @@ function renderHome() {
   const screen = byId("screen-home");
   const latest = latestProgress();
   const previous = previousProgress();
+  const currentWeight = latestMorningWeight();
+  const previousWeight = previousMorningWeight();
   const today = todayWorkout();
   const week = programWeek();
   const completedToday = hasWorkoutOnDate(today.id, todayIso());
@@ -342,7 +354,7 @@ function renderHome() {
         <button class="link-button" data-route="progress">Edit</button>
       </div>
       <div class="stats-grid">
-        ${statCard("Weight", `${fmt(latest.weight)} lbs`, changeText(latest.weight, previous?.weight, "lb"))}
+        ${statCard("Weight", `${fmt(currentWeight.weight)} lbs`, changeText(currentWeight.weight, previousWeight?.weight, "lb"))}
         ${statCard("Waist", `${fmt(latest.waist)}"`, changeText(latest.waist, previous?.waist, "\"", true))}
         ${statCard("Ratio", ratio, "Shoulder-to-waist")}
         ${statCard("Adonis Score", `${score}%`, score >= 80 ? "On Track" : "Build Phase")}
@@ -522,8 +534,10 @@ function renderActiveWorkout() {
 }
 
 function activeExerciseCard(workout, exercise, active) {
-  const sets = active.sets.filter((set) => set.exerciseId === exercise.id);
-  const last = lastExerciseSets(workout.id, exercise.id);
+  const sets = active.sets
+    .map((set, index) => ({ set, index }))
+    .filter((item) => item.set.exerciseId === exercise.id);
+  const last = lastExerciseSets(workout.id, exercise.id, { excludeSessionId: active.id });
   return `
     <div class="exercise-card">
       <div class="exercise-head">
@@ -539,33 +553,42 @@ function activeExerciseCard(workout, exercise, active) {
         <span class="pill">${sets.length}/${exercise.sets} complete</span>
       </div>
       <div class="set-list">
-        ${sets.length ? sets.map((set, index) => `<div class="set-line"><span>Set ${index + 1}: ${set.weight} lb × ${set.reps}</span><span>${set.notes || "✓"}</span></div>`).join("") : `<div class="small">No sets logged yet.</div>`}
+        ${sets.length ? sets.map(({ set, index }, setNumber) => `
+          <div class="set-line">
+            <span>Set ${setNumber + 1}: ${set.weight} lb × ${set.reps}</span>
+            <button class="mini-link" data-edit-set="${index}" data-exercise-id="${exercise.id}">Edit</button>
+          </div>
+        `).join("") : `<div class="small">No sets logged yet.</div>`}
       </div>
     </div>
   `;
 }
 
-function openSetModal(exerciseId) {
+function openSetModal(exerciseId, setIndex = null) {
   const active = state.activeWorkout;
   if (!active) return;
   const workout = getWorkout(active.workoutId);
   const exercise = workout.exercises.find((item) => item.id === exerciseId);
-  const last = lastExerciseSets(workout.id, exercise.id);
+  const last = lastExerciseSets(workout.id, exercise.id, { excludeSessionId: active.id });
+  const editingSet = Number.isInteger(setIndex) ? active.sets[setIndex] : null;
+  const suggested = suggestedSetValues(active, workout, exercise, editingSet);
   byId("set-modal").innerHTML = `
     <div class="modal-card">
-      <h2>${exercise.name}</h2>
+      <h2>${editingSet ? `Edit ${exercise.name}` : exercise.name}</h2>
       <p class="form-help">${targetText(last)} · Prescribed rest ${formatRest(exercise.restSec)}</p>
       <form id="set-form">
         <input type="hidden" name="exerciseId" value="${exercise.id}">
+        <input type="hidden" name="setIndex" value="${editingSet ? setIndex : ""}">
         <div class="field-grid">
-          <div class="field"><label>Weight</label><input name="weight" inputmode="decimal" required placeholder="80"></div>
-          <div class="field"><label>Reps</label><input name="reps" inputmode="numeric" required placeholder="10"></div>
+          <div class="field"><label>Weight</label><input name="weight" inputmode="decimal" required placeholder="80" value="${suggested.weight ?? ""}"></div>
+          <div class="field"><label>Reps</label><input name="reps" inputmode="numeric" required placeholder="10" value="${suggested.reps ?? ""}"></div>
         </div>
-        <div class="field" style="margin-top:10px"><label>Notes</label><textarea name="notes" placeholder="Clean reps, +1 next time"></textarea></div>
+        <div class="field" style="margin-top:10px"><label>Notes</label><textarea name="notes" placeholder="Clean reps, +1 next time">${escapeTextarea(suggested.notes || "")}</textarea></div>
         <div class="button-row">
           <button class="button secondary" type="button" data-action="close-modal">Cancel</button>
-          <button class="button primary" type="submit">Save Set</button>
+          <button class="button primary" type="submit" name="saveMode" value="one">${editingSet ? "Update Set" : "Save Set"}</button>
         </div>
+        ${editingSet ? "" : `<button class="button secondary full-row-action" type="submit" name="saveMode" value="all">Save All ${exercise.sets} Sets</button>`}
       </form>
     </div>
   `;
@@ -573,25 +596,63 @@ function openSetModal(exerciseId) {
   byId("set-modal").querySelector("input[name='weight']").focus();
 }
 
+function suggestedSetValues(active, workout, exercise, editingSet) {
+  if (editingSet) return editingSet;
+  const currentSets = active.sets.filter((set) => set.exerciseId === exercise.id);
+  if (currentSets.length) return currentSets[currentSets.length - 1];
+  const historySets = lastExerciseSets(workout.id, exercise.id, { excludeSessionId: active.id });
+  if (historySets?.length) return historySets[historySets.length - 1];
+  return { weight: "", reps: "", notes: "" };
+}
+
 function saveSet(formData) {
   const active = state.activeWorkout;
   if (!active) return;
   const workout = getWorkout(active.workoutId);
   const exercise = workout.exercises.find((item) => item.id === formData.get("exerciseId"));
-  active.sets.push({
+  const setIndex = formData.get("setIndex") === "" ? null : Number(formData.get("setIndex"));
+  const mode = formData.get("saveMode") || "one";
+  const baseSet = {
     exerciseId: exercise.id,
     exerciseName: exercise.name,
     weight: Number(formData.get("weight")),
     reps: Number(formData.get("reps")),
     notes: String(formData.get("notes") || "").trim(),
     loggedAt: new Date().toISOString()
-  });
+  };
+
+  if (Number.isInteger(setIndex) && active.sets[setIndex]) {
+    active.sets[setIndex] = { ...active.sets[setIndex], ...baseSet };
+  } else if (mode === "all") {
+    const existingCount = active.sets.filter((set) => set.exerciseId === exercise.id).length;
+    const remaining = Math.max(1, exercise.sets - existingCount);
+    for (let index = 0; index < remaining; index += 1) {
+      active.sets.push({ ...baseSet, loggedAt: new Date().toISOString() });
+    }
+  } else {
+    active.sets.push(baseSet);
+  }
+
+  rememberExerciseHistory(active, exercise);
   active.restEndAt = new Date(Date.now() + exercise.restSec * 1000).toISOString();
   saveState();
   closeModal();
   renderActiveWorkout();
   startActiveTick();
-  showToast(`Set saved. Rest ${formatRest(exercise.restSec)} started.`);
+  showToast(`${mode === "all" ? "Sets saved" : Number.isInteger(setIndex) ? "Set updated" : "Set saved"}. Rest ${formatRest(exercise.restSec)} started.`);
+}
+
+function rememberExerciseHistory(active, exercise) {
+  state.exerciseHistory = state.exerciseHistory || {};
+  const key = exerciseHistoryKey(active.workoutId, exercise.id);
+  state.exerciseHistory[key] = {
+    sessionId: active.id,
+    workoutId: active.workoutId,
+    exerciseId: exercise.id,
+    exerciseName: exercise.name,
+    date: new Date().toISOString(),
+    sets: active.sets.filter((set) => set.exerciseId === exercise.id)
+  };
 }
 
 function finishWorkout() {
@@ -623,6 +684,7 @@ function cancelWorkout() {
 function renderProgress() {
   const latest = latestProgress();
   const prev = previousProgress();
+  const morningWeight = latestMorningWeight();
   const avg = sevenDayAverage();
   byId("screen-progress").innerHTML = `
     <div class="hero-card">
@@ -630,7 +692,7 @@ function renderProgress() {
       <p>Log morning metrics. Waist is the guardrail; shoulders, lean mass, and training performance are the climb.</p>
     </div>
     <div class="stats-grid">
-      ${statCard("Current Weight", `${fmt(latest.weight)} lbs`, avg ? `7-day avg ${fmt(avg)} lbs` : "Need 7 days")}
+      ${statCard("Morning Weight", `${fmt(morningWeight.weight)} lbs`, avg ? `7-day avg ${fmt(avg)} lbs` : "Need 7 days")}
       ${statCard("Current Waist", `${fmt(latest.waist)}"`, changeText(latest.waist, prev?.waist, "\"", true))}
       ${statCard("Shoulder Ratio", ratioText(latest), "Target 1.45+")}
       ${statCard("Adonis Score", `${adonisScore(latest)}%`, "Composite physique signal")}
@@ -649,28 +711,34 @@ function renderProgress() {
       </form>
     </div>
     <div class="section-panel panel">
-      <div class="section-head"><h2>Log Metrics</h2><span class="small">${todayIso()}</span></div>
+      <div class="section-head"><h2>Log Metrics</h2><span class="small">ShapeScale + morning weight</span></div>
       <form id="progress-form">
-        <div class="field-grid">
+        <div class="field-grid metrics-top-grid">
           ${field("date", "Date", "date", todayIso())}
-          ${field("weight", "Morning Weight", "number", latest.weight)}
-          ${field("waist", "Waist", "number", latest.waist)}
-          ${field("shoulders", "Shoulders", "number", latest.shoulders)}
-          ${field("arms", "Arms / Biceps", "number", latest.arms ?? latest.biceps)}
-          ${field("hips", "Hips", "number", latest.hips)}
-          ${field("thighs", "Thighs", "number", latest.thighs)}
-          ${field("neck", "Neck", "number", latest.neck)}
-          ${field("calves", "Calves", "number", latest.calves)}
-          ${field("bodyFat", "Body Fat %", "number", latest.bodyFat)}
-          ${field("leanMass", "Lean Mass", "number", latest.leanMass)}
+          ${field("weight", "Morning Weight", "number", morningWeight.weight)}
         </div>
-        <div class="field" style="margin-top:10px"><label>Notes</label><textarea name="notes" placeholder="Sleep, photos, waist trend, performance notes"></textarea></div>
-        <button class="button primary" type="submit">Save Progress</button>
+        <div class="field-grid shapescale-metric-grid">
+          ${metricDisplay("Waist", `${fmt(latest.waist)}\"`)}
+          ${metricDisplay("Shoulders", `${fmt(latest.shoulders)}\"`)}
+          ${metricDisplay("Arms / Biceps", `${fmt(latest.arms ?? latest.biceps)}\"`)}
+          ${metricDisplay("Hips", `${fmt(latest.hips)}\"`)}
+          ${metricDisplay("Thighs", `${fmt(latest.thighs)}\"`)}
+          ${metricDisplay("Neck", `${fmt(latest.neck)}\"`)}
+          ${metricDisplay("Calves", `${fmt(latest.calves)}\"`)}
+          ${metricDisplay("Body Fat", `${fmt(latest.bodyFat)}%`)}
+          ${metricDisplay("Lean Mass", `${fmt(latest.leanMass)} lbs`)}
+        </div>
+        <div class="field" style="margin-top:10px"><label>Morning Weight Notes</label><textarea name="notes" placeholder="Sleep, sodium, late meal, travel, weigh-in context"></textarea></div>
+        <button class="button primary" type="submit">Save Morning Weight</button>
       </form>
     </div>
     <div class="section-panel panel">
       <div class="section-head"><h2>Recent Logs</h2><span class="small">${state.progressLogs.length} entries</span></div>
       <div class="workout-list">${state.progressLogs.slice(0, 6).map(progressRow).join("")}</div>
+    </div>
+    <div class="section-panel panel">
+      <div class="section-head"><h2>Morning Weight History</h2><span class="small">${(state.morningWeights || []).length} entries</span></div>
+      <div class="workout-list">${(state.morningWeights || []).slice(0, 6).map(morningWeightRow).join("") || `<div class="empty">No morning weights yet.</div>`}</div>
     </div>
   `;
 }
@@ -680,30 +748,24 @@ function field(name, label, type, value) {
   return `<div class="field"><label>${label}</label><input name="${name}" type="${type}"${step} value="${value ?? ""}" required></div>`;
 }
 
+function metricDisplay(label, value) {
+  return `<div class="metric-display"><span>${label}</span><b>${value}</b></div>`;
+}
+
 function saveProgress(formData) {
   const entry = {
     date: formData.get("date"),
     weight: Number(formData.get("weight")),
-    waist: Number(formData.get("waist")),
-    shoulders: Number(formData.get("shoulders")),
-    arms: Number(formData.get("arms")),
-    biceps: Number(formData.get("arms")),
-    hips: Number(formData.get("hips")),
-    thighs: Number(formData.get("thighs")),
-    neck: Number(formData.get("neck")),
-    calves: Number(formData.get("calves")),
-    bodyFat: Number(formData.get("bodyFat")),
-    leanMass: Number(formData.get("leanMass")),
-    source: "Manual",
     notes: String(formData.get("notes") || "").trim()
   };
-  state.progressLogs = state.progressLogs.filter((item) => item.date !== entry.date);
-  state.progressLogs.unshift(entry);
-  state.progressLogs.sort((a, b) => b.date.localeCompare(a.date));
+  state.morningWeights = state.morningWeights || [];
+  state.morningWeights = state.morningWeights.filter((item) => item.date !== entry.date);
+  state.morningWeights.unshift(entry);
+  state.morningWeights.sort((a, b) => b.date.localeCompare(a.date));
   saveState();
   renderProgress();
   renderHome();
-  showToast("Progress saved.");
+  showToast("Morning weight saved.");
 }
 
 async function importShapeScale(formData) {
@@ -806,7 +868,7 @@ function explicitWeightValue(text) {
 function toIsoDate(monthName, day, year) {
   const months = { Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5, Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11 };
   const date = new Date(Number(year), months[monthName.slice(0, 3)], Number(day));
-  return date.toISOString().slice(0, 10);
+  return toLocalIsoDate(date);
 }
 
 function round1(value) {
@@ -1381,7 +1443,7 @@ function habitWeekTrend() {
   return Array.from({ length: 7 }, (_, index) => {
     const date = new Date();
     date.setDate(date.getDate() - index);
-    const iso = date.toISOString().slice(0, 10);
+    const iso = toLocalIsoDate(date);
     const score = habitScore(iso);
     return `<div class="habit-day"><b>${date.toLocaleDateString(undefined, { weekday: "short" })}</b><div class="habit-ring" style="--score:${score}%">${score}</div><span>${iso.slice(5)}</span></div>`;
   }).reverse().join("");
@@ -1391,7 +1453,7 @@ function setWeek(week) {
   state.settings.week = week;
   const start = parseLocalDate(todayIso());
   start.setDate(start.getDate() - ((week - 1) * 7));
-  state.settings.startDate = start.toISOString().slice(0, 10);
+  state.settings.startDate = toLocalIsoDate(start);
   saveState();
   renderWorkouts();
   renderHome();
@@ -1440,6 +1502,10 @@ function progressRow(entry) {
   return `<div class="history-row"><strong>${entry.date} ${entry.source ? `<span class="source-tag">${entry.source}</span>` : ""}</strong><div class="meta">${fmt(entry.weight)} lb · ${fmt(entry.waist)}" waist · ${fmt(entry.shoulders)}" shoulders · ${fmt(entry.bodyFat)}% BF</div>${entry.notes ? `<div class="small">${entry.notes}</div>` : ""}</div>`;
 }
 
+function morningWeightRow(entry) {
+  return `<div class="history-row"><strong>${entry.date}</strong><div class="meta">${fmt(entry.weight)} lb morning weight</div>${entry.notes ? `<div class="small">${escapeHtml(entry.notes)}</div>` : ""}</div>`;
+}
+
 function foodRow(food, index) {
   return `<div class="food-row"><div><strong>${food.name}</strong><div class="meta">${food.calories} kcal · P ${food.protein}g · C ${food.carbs}g · F ${food.fat}g</div></div><button class="small-chip" data-remove-food="${index}">Remove</button></div>`;
 }
@@ -1464,7 +1530,7 @@ function weeklyNutritionTrend() {
   const days = Array.from({ length: 7 }, (_, index) => {
     const date = new Date();
     date.setDate(date.getDate() - index);
-    return date.toISOString().slice(0, 10);
+    return toLocalIsoDate(date);
   });
   const daily = days.map((date) => macroTotals(state.nutritionLogs[date] || []));
   const loggedDays = daily.filter((day) => day.calories > 0);
@@ -1494,8 +1560,14 @@ function targetText(last) {
   return `Beat last time: ${best.weight} lb x ${Number(best.reps) + 1}`;
 }
 
-function lastExerciseSets(workoutId, exerciseId) {
-  const log = state.workoutLogs.find((item) => item.workoutId === workoutId && item.sets.some((set) => set.exerciseId === exerciseId));
+function exerciseHistoryKey(workoutId, exerciseId) {
+  return `${workoutId}:${exerciseId}`;
+}
+
+function lastExerciseSets(workoutId, exerciseId, options = {}) {
+  const history = state.exerciseHistory?.[exerciseHistoryKey(workoutId, exerciseId)];
+  if (history?.sets?.length && history.sessionId !== options.excludeSessionId) return history.sets;
+  const log = state.workoutLogs.find((item) => item.id !== options.excludeSessionId && item.workoutId === workoutId && item.sets.some((set) => set.exerciseId === exerciseId));
   return log ? log.sets.filter((set) => set.exerciseId === exerciseId) : null;
 }
 
@@ -1520,8 +1592,17 @@ function previousProgress() {
   return state.progressLogs[1] || null;
 }
 
+function latestMorningWeight() {
+  const latest = latestProgress();
+  return (state.morningWeights || [])[0] || { date: latest.date || todayIso(), weight: latest.weight, notes: "" };
+}
+
+function previousMorningWeight() {
+  return (state.morningWeights || [])[1] || null;
+}
+
 function sevenDayAverage() {
-  const recent = state.progressLogs.filter((entry) => daysBetween(entry.date, todayIso()) < 7);
+  const recent = (state.morningWeights || []).filter((entry) => daysBetween(entry.date, todayIso()) < 7);
   if (recent.length < 7) return null;
   return recent.reduce((sum, entry) => sum + Number(entry.weight), 0) / recent.length;
 }
@@ -1556,6 +1637,12 @@ function macroTotals(foods) {
   }), { calories: 0, protein: 0, carbs: 0, fat: 0 });
 }
 
+function seedMorningWeights(progressLogs = defaultState.progressLogs) {
+  return (progressLogs || [])
+    .filter((entry) => entry.date && entry.weight)
+    .map((entry) => ({ date: entry.date, weight: Number(entry.weight), notes: entry.source === "ShapeScale" ? "Seeded from ShapeScale import." : "Seeded from progress history." }));
+}
+
 function loadState() {
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
@@ -1564,6 +1651,8 @@ function loadState() {
       ...structuredClone(defaultState),
       ...saved,
       settings: { ...defaultState.settings, ...(saved.settings || {}) },
+      exerciseHistory: saved.exerciseHistory || {},
+      morningWeights: saved.morningWeights || seedMorningWeights(saved.progressLogs),
       savedMeals: saved.savedMeals || [],
       habitLogs: saved.habitLogs || {},
       coachMessages: saved.coachMessages?.length ? saved.coachMessages : structuredClone(defaultState.coachMessages)
@@ -1664,6 +1753,8 @@ function hydrateState(nextState) {
     ...structuredClone(defaultState),
     ...nextState,
     settings: { ...defaultState.settings, ...(nextState.settings || {}) },
+    exerciseHistory: nextState.exerciseHistory || {},
+    morningWeights: nextState.morningWeights || seedMorningWeights(nextState.progressLogs),
     savedMeals: nextState.savedMeals || [],
     habitLogs: nextState.habitLogs || {},
     coachMessages: nextState.coachMessages?.length ? nextState.coachMessages : structuredClone(defaultState.coachMessages)
@@ -1700,6 +1791,13 @@ function escapeAttribute(value) {
     .replaceAll(">", "&gt;");
 }
 
+function escapeTextarea(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
 function fmt(value) {
   return Number(value || 0).toFixed(1).replace(".0", "");
 }
@@ -1715,13 +1813,20 @@ function secondsToClock(total) {
 }
 
 function todayIso() {
-  return new Date().toISOString().slice(0, 10);
+  return toLocalIsoDate(new Date());
 }
 
 function entryDaysAgo(days, data) {
   const date = new Date();
   date.setDate(date.getDate() - days);
-  return { date: date.toISOString().slice(0, 10), ...data };
+  return { date: toLocalIsoDate(date), ...data };
+}
+
+function toLocalIsoDate(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function daysBetween(start, end) {
