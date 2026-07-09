@@ -32,6 +32,25 @@ async function readMealLabel(image) {
     },
     body: JSON.stringify({
       model,
+      text: {
+        format: {
+          type: "json_schema",
+          name: "meal_label",
+          strict: true,
+          schema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["name", "calories", "protein", "carbs", "fat"],
+            properties: {
+              name: { type: "string", description: "Meal or product name visible on the label, or a concise descriptive name." },
+              calories: { type: "number", description: "Calories/kcal for one meal, container, package, or serving shown." },
+              protein: { type: "number", description: "Protein grams for one meal, container, package, or serving shown." },
+              carbs: { type: "number", description: "Carbohydrate grams for one meal, container, package, or serving shown." },
+              fat: { type: "number", description: "Fat grams for one meal, container, package, or serving shown." }
+            }
+          }
+        }
+      },
       input: [
         {
           role: "user",
@@ -39,12 +58,12 @@ async function readMealLabel(image) {
             {
               type: "input_text",
               text: [
-                "Read this meal-prep lid or nutrition label.",
-                "Return only JSON with these keys: name, calories, protein, carbs, fat.",
-                "Use the macros for one meal/container when shown.",
+                "Read the visible text on this meal-prep lid, food label, or nutrition sticker.",
+                "Extract the meal name and macros for one meal/container/package when shown.",
+                "Look for labels and shorthand such as Calories, Cal, kcal, Protein, Pro, P, Carbs, Carbohydrates, C, Fat, F, and P/C/F.",
+                "If multiple serving columns exist, prefer the full container/package/meal column over tiny per-serving values.",
                 "If the meal name is visible, use it. If not, use a concise descriptive name.",
-                "Numbers must be numeric grams/kcal. If a macro is missing, use 0.",
-                "No markdown. No commentary."
+                "Return numeric kcal and grams only. If a macro truly is not visible, use 0."
               ].join(" ")
             },
             { type: "input_image", image_url: image }
@@ -83,13 +102,18 @@ function parseJson(text) {
 }
 
 function cleanMeal(meal) {
-  return {
+  const cleaned = {
     name: String(meal.name || "Scanned meal").trim(),
     calories: Math.round(Number(meal.calories || 0)),
     protein: roundMacro(meal.protein),
     carbs: roundMacro(meal.carbs),
     fat: roundMacro(meal.fat)
   };
+  const hasUsefulMacro = [cleaned.calories, cleaned.protein, cleaned.carbs, cleaned.fat].some((value) => Number(value) > 0);
+  if (!hasUsefulMacro) {
+    throw new Error("Could not find readable macros on that label. Try a closer, brighter photo.");
+  }
+  return cleaned;
 }
 
 function roundMacro(value) {

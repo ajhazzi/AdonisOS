@@ -154,6 +154,8 @@ let activeTick = null;
 let toastTimer = null;
 let cloudSyncTimer = null;
 let cloudStatus = "Local mode";
+let currentLocalDate = todayIso();
+let dateRolloverTimer = null;
 
 const app = document.querySelector("#app");
 
@@ -162,6 +164,7 @@ init();
 function init() {
   renderShell();
   route(state.activeWorkout ? "active" : "home");
+  startDateRolloverWatch();
   registerServiceWorker();
   if (getCloudPin()) pullCloudState(false);
 }
@@ -1026,11 +1029,18 @@ function renderNutrition() {
     <div class="section-panel panel">
       <div class="section-head"><h2>Add Food</h2><span class="small">${date}</span></div>
       <form id="meal-label-form" class="label-scan-form">
-        <label class="file-drop">
-          <span>Scan Meal-Prep Label</span>
-          <small>Snap the lid or nutrition sticker and let AI fill the macros.</small>
-          <input name="labelPhoto" type="file" accept="image/*" capture="environment" required>
-        </label>
+        <div class="label-photo-grid">
+          <label class="file-drop">
+            <span>Take Photo</span>
+            <small>Open the camera for a fresh meal-prep lid or nutrition sticker.</small>
+            <input name="labelCameraPhoto" type="file" accept="image/*" capture="environment">
+          </label>
+          <label class="file-drop">
+            <span>Choose From Photos</span>
+            <small>Use a label photo you already took from the camera roll.</small>
+            <input name="labelLibraryPhoto" type="file" accept="image/*">
+          </label>
+        </div>
         <button class="button secondary" type="submit">Read Label</button>
       </form>
       <form id="food-form">
@@ -1152,9 +1162,11 @@ function removeSavedMeal(id) {
 }
 
 async function scanMealLabel(formData) {
-  const photo = formData.get("labelPhoto");
+  const cameraPhoto = formData.get("labelCameraPhoto");
+  const libraryPhoto = formData.get("labelLibraryPhoto");
+  const photo = cameraPhoto?.size ? cameraPhoto : libraryPhoto;
   if (!photo || !photo.size) {
-    showToast("Add a label photo first.");
+    showToast("Take or choose a label photo first.");
     return;
   }
 
@@ -1293,14 +1305,14 @@ function resizeImageFile(file) {
       const img = new Image();
       img.onerror = reject;
       img.onload = () => {
-        const maxSide = 1200;
+        const maxSide = 1800;
         const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
         const canvas = document.createElement("canvas");
         canvas.width = Math.round(img.width * scale);
         canvas.height = Math.round(img.height * scale);
         const ctx = canvas.getContext("2d");
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        resolve(canvas.toDataURL("image/jpeg", 0.78));
+        resolve(canvas.toDataURL("image/jpeg", 0.9));
       };
       img.src = String(reader.result || "");
     };
@@ -1602,6 +1614,25 @@ function startActiveTick() {
 function stopActiveTick() {
   if (activeTick) clearInterval(activeTick);
   activeTick = null;
+}
+
+function startDateRolloverWatch() {
+  if (dateRolloverTimer) clearInterval(dateRolloverTimer);
+  dateRolloverTimer = setInterval(handleDateRollover, 30_000);
+  window.addEventListener("focus", handleDateRollover);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) handleDateRollover();
+  });
+}
+
+function handleDateRollover() {
+  const nextDate = todayIso();
+  if (nextDate === currentLocalDate) return;
+  currentLocalDate = nextDate;
+  if (currentScreen === "nutrition" || currentScreen === "home" || currentScreen === "progress" || currentScreen === "more") {
+    route(currentScreen);
+  }
+  showToast("New day started. Daily logs reset for today.");
 }
 
 function tickTimers() {

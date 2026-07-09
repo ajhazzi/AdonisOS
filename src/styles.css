@@ -1132,6 +1132,12 @@ textarea:focus {
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
+.label-photo-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
 .file-drop {
   display: grid;
   gap: 4px;
@@ -1603,6 +1609,10 @@ textarea:focus {
 }
 
 @media (max-width: 420px) {
+  .label-photo-grid {
+    grid-template-columns: 1fr;
+  }
+
   .metrics-top-grid {
     grid-template-columns: 1fr;
   }
