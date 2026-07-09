@@ -161,7 +161,7 @@ init();
 
 function init() {
   renderShell();
-  route("home");
+  route(state.activeWorkout ? "active" : "home");
   registerServiceWorker();
   if (getCloudPin()) pullCloudState(false);
 }
@@ -231,6 +231,8 @@ function handleClick(event) {
   const action = actionButton.dataset.action;
   if (action === "start-today") startWorkout(todayWorkout().id);
   if (action === "start-selected") startWorkout(selectedWorkoutId);
+  if (action === "pause-workout") pauseWorkout();
+  if (action === "resume-workout") resumeWorkout();
   if (action === "finish-workout") finishWorkout();
   if (action === "cancel-workout") cancelWorkout();
   if (action === "close-modal") closeModal();
@@ -269,6 +271,11 @@ function route(screen) {
   if (screen !== "active") stopActiveTick();
   if (screen === "home") renderHome();
   if (screen === "workouts") renderWorkouts();
+  if (screen === "active") {
+    renderActiveWorkout();
+    if (isWorkoutPaused(state.activeWorkout)) stopActiveTick();
+    else startActiveTick();
+  }
   if (screen === "progress") renderProgress();
   if (screen === "nutrition") renderNutrition();
   if (screen === "coach") renderCoach();
@@ -494,19 +501,26 @@ function startWorkout(workoutId) {
     openWorkout(workoutId);
     return;
   }
+  if (state.activeWorkout) {
+    selectedWorkoutId = state.activeWorkout.workoutId;
+    route("active");
+    showToast("Workout already open. Pick up where you left off.");
+    return;
+  }
   selectedWorkoutId = workoutId;
   renderWorkoutDetail(workout);
   state.activeWorkout = {
     id: crypto.randomUUID(),
     workoutId,
     startedAt: new Date().toISOString(),
+    pausedAt: null,
+    totalPausedSec: 0,
+    restRemainingSec: null,
     sets: [],
     restEndAt: null
   };
   saveState();
-  renderActiveWorkout();
   route("active");
-  startActiveTick();
 }
 
 function renderActiveWorkout() {
@@ -516,17 +530,21 @@ function renderActiveWorkout() {
     return;
   }
   const workout = getWorkout(active.workoutId);
+  selectedWorkoutId = workout.id;
+  const paused = isWorkoutPaused(active);
   byId("screen-active").innerHTML = `
-    <button class="back-button" data-route="detail">‹ Workout Detail</button>
+    <button class="back-button" data-route="workouts">‹ Workouts</button>
     <div class="timer-block">
       <div class="small">${workout.name}</div>
       <div id="total-timer" class="timer-main">00:00</div>
-      <div class="small">Rest Timer</div>
+      <div class="small">${paused ? "Paused" : "Rest Timer"}</div>
       <div id="rest-timer" class="rest-timer">ready</div>
+      ${paused ? `<div class="pause-badge">Workout paused. Timers are frozen.</div>` : ""}
     </div>
     ${workout.exercises.map((exercise) => activeExerciseCard(workout, exercise, active)).join("")}
     <div class="button-row">
       <button class="button secondary" data-action="cancel-workout">Cancel</button>
+      <button class="button secondary" data-action="${paused ? "resume-workout" : "pause-workout"}">${paused ? "Resume" : "Pause"}</button>
       <button class="button primary" data-action="finish-workout">Finish</button>
     </div>
   `;
@@ -634,12 +652,47 @@ function saveSet(formData) {
   }
 
   rememberExerciseHistory(active, exercise);
-  active.restEndAt = new Date(Date.now() + exercise.restSec * 1000).toISOString();
+  if (isWorkoutPaused(active)) {
+    active.restRemainingSec = exercise.restSec;
+    active.restEndAt = null;
+  } else {
+    active.restEndAt = new Date(Date.now() + exercise.restSec * 1000).toISOString();
+    active.restRemainingSec = null;
+  }
   saveState();
   closeModal();
   renderActiveWorkout();
+  if (isWorkoutPaused(active)) stopActiveTick();
+  else startActiveTick();
+  showToast(`${mode === "all" ? "Sets saved" : Number.isInteger(setIndex) ? "Set updated" : "Set saved"}. ${isWorkoutPaused(active) ? "Rest is queued for resume." : `Rest ${formatRest(exercise.restSec)} started.`}`);
+}
+
+function pauseWorkout() {
+  const active = state.activeWorkout;
+  if (!active || isWorkoutPaused(active)) return;
+  active.pausedAt = new Date().toISOString();
+  active.restRemainingSec = remainingRestSeconds(active);
+  active.restEndAt = null;
+  saveState();
+  renderActiveWorkout();
+  stopActiveTick();
+  showToast("Workout paused.");
+}
+
+function resumeWorkout() {
+  const active = state.activeWorkout;
+  if (!active || !isWorkoutPaused(active)) return;
+  const pausedSec = Math.max(0, Math.round((Date.now() - new Date(active.pausedAt).getTime()) / 1000));
+  active.totalPausedSec = Number(active.totalPausedSec || 0) + pausedSec;
+  active.pausedAt = null;
+  if (Number(active.restRemainingSec) > 0) {
+    active.restEndAt = new Date(Date.now() + Number(active.restRemainingSec) * 1000).toISOString();
+  }
+  active.restRemainingSec = null;
+  saveState();
+  renderActiveWorkout();
   startActiveTick();
-  showToast(`${mode === "all" ? "Sets saved" : Number.isInteger(setIndex) ? "Set updated" : "Set saved"}. Rest ${formatRest(exercise.restSec)} started.`);
+  showToast("Workout resumed.");
 }
 
 function rememberExerciseHistory(active, exercise) {
@@ -658,13 +711,12 @@ function rememberExerciseHistory(active, exercise) {
 function finishWorkout() {
   const active = state.activeWorkout;
   if (!active) return;
-  const started = new Date(active.startedAt).getTime();
   state.workoutLogs.unshift({
     id: active.id,
     workoutId: active.workoutId,
     workoutName: getWorkout(active.workoutId).name,
     date: new Date().toISOString(),
-    durationSec: Math.max(0, Math.round((Date.now() - started) / 1000)),
+    durationSec: activeWorkoutElapsedSec(active),
     sets: active.sets
   });
   state.activeWorkout = null;
@@ -1487,11 +1539,28 @@ function tickTimers() {
   if (!active) return;
   const totalEl = byId("total-timer");
   const restEl = byId("rest-timer");
-  if (totalEl) totalEl.textContent = secondsToClock(Math.max(0, Math.floor((Date.now() - new Date(active.startedAt).getTime()) / 1000)));
+  if (totalEl) totalEl.textContent = secondsToClock(activeWorkoutElapsedSec(active));
   if (restEl) {
-    const rem = active.restEndAt ? Math.max(0, Math.ceil((new Date(active.restEndAt).getTime() - Date.now()) / 1000)) : 0;
-    restEl.textContent = rem ? secondsToClock(rem) : "ready";
+    const rem = remainingRestSeconds(active);
+    restEl.textContent = rem ? secondsToClock(rem) : isWorkoutPaused(active) ? "paused" : "ready";
   }
+}
+
+function isWorkoutPaused(active = state.activeWorkout) {
+  return Boolean(active?.pausedAt);
+}
+
+function activeWorkoutElapsedSec(active) {
+  if (!active?.startedAt) return 0;
+  const now = isWorkoutPaused(active) ? new Date(active.pausedAt).getTime() : Date.now();
+  const raw = Math.floor((now - new Date(active.startedAt).getTime()) / 1000);
+  return Math.max(0, raw - Number(active.totalPausedSec || 0));
+}
+
+function remainingRestSeconds(active) {
+  if (!active) return 0;
+  if (isWorkoutPaused(active)) return Math.max(0, Number(active.restRemainingSec || 0));
+  return active.restEndAt ? Math.max(0, Math.ceil((new Date(active.restEndAt).getTime() - Date.now()) / 1000)) : 0;
 }
 
 function statCard(label, main, change) {
@@ -1643,6 +1712,18 @@ function seedMorningWeights(progressLogs = defaultState.progressLogs) {
     .map((entry) => ({ date: entry.date, weight: Number(entry.weight), notes: entry.source === "ShapeScale" ? "Seeded from ShapeScale import." : "Seeded from progress history." }));
 }
 
+function normalizeActiveWorkout(active) {
+  if (!active) return null;
+  return {
+    ...active,
+    pausedAt: active.pausedAt || null,
+    totalPausedSec: Number(active.totalPausedSec || 0),
+    restRemainingSec: active.restRemainingSec ?? null,
+    sets: active.sets || [],
+    restEndAt: active.restEndAt || null
+  };
+}
+
 function loadState() {
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
@@ -1653,6 +1734,7 @@ function loadState() {
       settings: { ...defaultState.settings, ...(saved.settings || {}) },
       exerciseHistory: saved.exerciseHistory || {},
       morningWeights: saved.morningWeights || seedMorningWeights(saved.progressLogs),
+      activeWorkout: normalizeActiveWorkout(saved.activeWorkout),
       savedMeals: saved.savedMeals || [],
       habitLogs: saved.habitLogs || {},
       coachMessages: saved.coachMessages?.length ? saved.coachMessages : structuredClone(defaultState.coachMessages)
@@ -1755,6 +1837,7 @@ function hydrateState(nextState) {
     settings: { ...defaultState.settings, ...(nextState.settings || {}) },
     exerciseHistory: nextState.exerciseHistory || {},
     morningWeights: nextState.morningWeights || seedMorningWeights(nextState.progressLogs),
+    activeWorkout: normalizeActiveWorkout(nextState.activeWorkout),
     savedMeals: nextState.savedMeals || [],
     habitLogs: nextState.habitLogs || {},
     coachMessages: nextState.coachMessages?.length ? nextState.coachMessages : structuredClone(defaultState.coachMessages)
