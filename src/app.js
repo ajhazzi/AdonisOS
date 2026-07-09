@@ -215,6 +215,7 @@ function handleClick(event) {
   const weekButton = event.target.closest("[data-week]");
   const logButton = event.target.closest("[data-log-set]");
   const editSetButton = event.target.closest("[data-edit-set]");
+  const editExerciseButton = event.target.closest("[data-edit-exercise]");
   const removeFoodButton = event.target.closest("[data-remove-food]");
   const savedMealButton = event.target.closest("[data-add-saved-meal]");
   const removeSavedMealButton = event.target.closest("[data-remove-saved-meal]");
@@ -224,6 +225,7 @@ function handleClick(event) {
   if (weekButton) setWeek(Number(weekButton.dataset.week));
   if (logButton) openSetModal(logButton.dataset.logSet);
   if (editSetButton) openSetModal(editSetButton.dataset.exerciseId, Number(editSetButton.dataset.editSet));
+  if (editExerciseButton) openExerciseModal(editExerciseButton.dataset.editExercise);
   if (removeFoodButton) removeFood(Number(removeFoodButton.dataset.removeFood));
   if (savedMealButton) addSavedMealToToday(savedMealButton.dataset.addSavedMeal);
   if (removeSavedMealButton) removeSavedMeal(removeSavedMealButton.dataset.removeSavedMeal);
@@ -253,6 +255,7 @@ function handleSubmit(event) {
     const setData = event.submitter ? new FormData(form, event.submitter) : new FormData(form);
     saveSet(setData);
   }
+  if (form.id === "exercise-form") saveExerciseEdit(new FormData(form));
   if (form.id === "progress-form") saveProgress(new FormData(form));
   if (form.id === "shapescale-form") importShapeScale(new FormData(form));
   if (form.id === "food-form") saveFood(new FormData(form));
@@ -516,6 +519,7 @@ function startWorkout(workoutId) {
     pausedAt: null,
     totalPausedSec: 0,
     restRemainingSec: null,
+    exerciseOverrides: {},
     sets: [],
     restEndAt: null
   };
@@ -532,6 +536,7 @@ function renderActiveWorkout() {
   const workout = getWorkout(active.workoutId);
   selectedWorkoutId = workout.id;
   const paused = isWorkoutPaused(active);
+  const exercises = activeWorkoutExercises(workout, active);
   byId("screen-active").innerHTML = `
     <button class="back-button" data-route="workouts">‹ Workouts</button>
     <div class="timer-block">
@@ -541,7 +546,7 @@ function renderActiveWorkout() {
       <div id="rest-timer" class="rest-timer">ready</div>
       ${paused ? `<div class="pause-badge">Workout paused. Timers are frozen.</div>` : ""}
     </div>
-    ${workout.exercises.map((exercise) => activeExerciseCard(workout, exercise, active)).join("")}
+    ${exercises.map((exercise) => activeExerciseCard(workout, exercise, active)).join("")}
     <div class="button-row">
       <button class="button secondary" data-action="cancel-workout">Cancel</button>
       <button class="button secondary" data-action="${paused ? "resume-workout" : "pause-workout"}">${paused ? "Resume" : "Pause"}</button>
@@ -563,7 +568,10 @@ function activeExerciseCard(workout, exercise, active) {
           <h3>${exercise.name}</h3>
           <div class="meta">${exercise.sets} sets · ${exercise.reps} reps · Rest ${formatRest(exercise.restSec)}</div>
         </div>
-        <button class="small-chip" data-log-set="${exercise.id}">Log</button>
+        <div class="exercise-actions">
+          <button class="small-chip" data-edit-exercise="${exercise.id}">Edit</button>
+          <button class="small-chip" data-log-set="${exercise.id}">Log</button>
+        </div>
       </div>
       <div class="pills">
         <span class="pill">${targetText(last)}</span>
@@ -586,7 +594,8 @@ function openSetModal(exerciseId, setIndex = null) {
   const active = state.activeWorkout;
   if (!active) return;
   const workout = getWorkout(active.workoutId);
-  const exercise = workout.exercises.find((item) => item.id === exerciseId);
+  const exercise = activeExerciseById(workout, active, exerciseId);
+  if (!exercise) return;
   const last = lastExerciseSets(workout.id, exercise.id, { excludeSessionId: active.id });
   const editingSet = Number.isInteger(setIndex) ? active.sets[setIndex] : null;
   const suggested = suggestedSetValues(active, workout, exercise, editingSet);
@@ -614,6 +623,66 @@ function openSetModal(exerciseId, setIndex = null) {
   byId("set-modal").querySelector("input[name='weight']").focus();
 }
 
+function openExerciseModal(exerciseId) {
+  const active = state.activeWorkout;
+  if (!active) return;
+  const workout = getWorkout(active.workoutId);
+  const exercise = activeExerciseById(workout, active, exerciseId);
+  if (!exercise) return;
+  byId("set-modal").innerHTML = `
+    <div class="modal-card">
+      <h2>Edit Exercise</h2>
+      <p class="form-help">This changes the exercise for this workout session only.</p>
+      <form id="exercise-form">
+        <input type="hidden" name="exerciseId" value="${escapeAttribute(exercise.id)}">
+        <div class="field"><label>Exercise Name</label><input name="name" required value="${escapeAttribute(exercise.name)}"></div>
+        <div class="field-grid" style="margin-top:10px">
+          <div class="field"><label>Sets</label><input name="sets" type="number" inputmode="numeric" min="1" max="12" required value="${exercise.sets}"></div>
+          <div class="field"><label>Reps</label><input name="reps" required value="${escapeAttribute(exercise.reps)}"></div>
+        </div>
+        <div class="field-grid" style="margin-top:10px">
+          <div class="field"><label>Rest Seconds</label><input name="restSec" type="number" inputmode="numeric" min="0" step="15" required value="${exercise.restSec}"></div>
+          <div class="field"><label>Original</label><input disabled value="${escapeAttribute(baseExerciseById(workout, exercise.id)?.name || exercise.name)}"></div>
+        </div>
+        <div class="field" style="margin-top:10px"><label>Cue</label><textarea name="cue" placeholder="Form cue or substitution note">${escapeTextarea(exercise.cue || "")}</textarea></div>
+        <div class="button-row">
+          <button class="button secondary" type="button" data-action="close-modal">Cancel</button>
+          <button class="button primary" type="submit">Save Exercise</button>
+        </div>
+      </form>
+    </div>
+  `;
+  byId("set-modal").classList.add("active");
+  byId("set-modal").querySelector("input[name='name']").focus();
+}
+
+function saveExerciseEdit(formData) {
+  const active = state.activeWorkout;
+  if (!active) return;
+  const workout = getWorkout(active.workoutId);
+  const exerciseId = String(formData.get("exerciseId"));
+  const base = baseExerciseById(workout, exerciseId);
+  if (!base) return;
+  const edited = {
+    ...base,
+    name: String(formData.get("name") || base.name).trim(),
+    sets: Math.max(1, Number(formData.get("sets") || base.sets)),
+    reps: String(formData.get("reps") || base.reps).trim(),
+    restSec: Math.max(0, Number(formData.get("restSec") || base.restSec)),
+    cue: String(formData.get("cue") || "").trim()
+  };
+  active.exerciseOverrides = active.exerciseOverrides || {};
+  active.exerciseOverrides[exerciseId] = edited;
+  active.sets = active.sets.map((set) => set.exerciseId === exerciseId ? { ...set, exerciseName: edited.name } : set);
+  rememberExerciseHistory(active, edited);
+  saveState();
+  closeModal();
+  renderActiveWorkout();
+  if (isWorkoutPaused(active)) stopActiveTick();
+  else startActiveTick();
+  showToast("Exercise updated.");
+}
+
 function suggestedSetValues(active, workout, exercise, editingSet) {
   if (editingSet) return editingSet;
   const currentSets = active.sets.filter((set) => set.exerciseId === exercise.id);
@@ -627,7 +696,8 @@ function saveSet(formData) {
   const active = state.activeWorkout;
   if (!active) return;
   const workout = getWorkout(active.workoutId);
-  const exercise = workout.exercises.find((item) => item.id === formData.get("exerciseId"));
+  const exercise = activeExerciseById(workout, active, formData.get("exerciseId"));
+  if (!exercise) return;
   const setIndex = formData.get("setIndex") === "" ? null : Number(formData.get("setIndex"));
   const mode = formData.get("saveMode") || "one";
   const baseSet = {
@@ -643,7 +713,7 @@ function saveSet(formData) {
     active.sets[setIndex] = { ...active.sets[setIndex], ...baseSet };
   } else if (mode === "all") {
     const existingCount = active.sets.filter((set) => set.exerciseId === exercise.id).length;
-    const remaining = Math.max(1, exercise.sets - existingCount);
+    const remaining = Math.max(0, exercise.sets - existingCount);
     for (let index = 0; index < remaining; index += 1) {
       active.sets.push({ ...baseSet, loggedAt: new Date().toISOString() });
     }
@@ -1644,6 +1714,19 @@ function getWorkout(id) {
   return workouts.find((workout) => workout.id === id) || workouts[0];
 }
 
+function baseExerciseById(workout, exerciseId) {
+  return workout?.exercises?.find((exercise) => exercise.id === exerciseId) || null;
+}
+
+function activeWorkoutExercises(workout, active) {
+  const overrides = active?.exerciseOverrides || {};
+  return (workout.exercises || []).map((exercise) => ({ ...exercise, ...(overrides[exercise.id] || {}) }));
+}
+
+function activeExerciseById(workout, active, exerciseId) {
+  return activeWorkoutExercises(workout, active).find((exercise) => exercise.id === exerciseId) || null;
+}
+
 function todayWorkout() {
   const map = { 1: "upper-a", 2: "tuesday", 3: "lower-a", 4: "thursday", 5: "upper-b", 6: "lower-b", 0: "sunday" };
   return getWorkout(map[new Date().getDay()]);
@@ -1719,6 +1802,7 @@ function normalizeActiveWorkout(active) {
     pausedAt: active.pausedAt || null,
     totalPausedSec: Number(active.totalPausedSec || 0),
     restRemainingSec: active.restRemainingSec ?? null,
+    exerciseOverrides: active.exerciseOverrides || {},
     sets: active.sets || [],
     restEndAt: active.restEndAt || null
   };

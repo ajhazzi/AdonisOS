@@ -923,6 +923,13 @@ button {
   align-items: flex-start;
 }
 
+.exercise-actions {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .set-list {
   margin-top: 10px;
   display: grid;
