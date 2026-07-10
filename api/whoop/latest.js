@@ -1,5 +1,5 @@
 import { json, requirePin } from "../_shared.js";
-import { latestReadiness } from "./_service.js";
+import { latestReadiness } from "../../server/whoop-service.js";
 
 export default async function handler(req, res) {
   if (!requirePin(req, res)) return;

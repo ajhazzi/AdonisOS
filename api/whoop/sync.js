@@ -1,5 +1,5 @@
 import { json, readJson, requirePin } from "../_shared.js";
-import { syncWhoopData } from "./_service.js";
+import { syncWhoopData } from "../../server/whoop-service.js";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {

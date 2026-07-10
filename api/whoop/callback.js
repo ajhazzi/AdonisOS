@@ -1,5 +1,5 @@
 import { appOrigin } from "../_shared.js";
-import { exchangeCodeForTokens, saveConnection, syncWhoopData, validateOauthState, whoopGet } from "./_service.js";
+import { exchangeCodeForTokens, saveConnection, syncWhoopData, validateOauthState, whoopGet } from "../../server/whoop-service.js";
 
 export default async function handler(req, res) {
   const url = new URL(req.url, `https://${req.headers.host}`);

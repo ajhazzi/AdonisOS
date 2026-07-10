@@ -1,5 +1,5 @@
 import { json, requirePin } from "../_shared.js";
-import { refreshTokens } from "./_service.js";
+import { refreshTokens } from "../../server/whoop-service.js";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {

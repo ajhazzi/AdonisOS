@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { appOrigin, env, optionalEnv, supabaseRequest } from "../_shared.js";
+import { appOrigin, env, optionalEnv, supabaseRequest } from "../api/_shared.js";
 
 export const USER_ID = process.env.ADONIS_USER_ID || "aj-hazzi";
 export const WHOOP_API_BASE = "https://api.prod.whoop.com/developer/v2";

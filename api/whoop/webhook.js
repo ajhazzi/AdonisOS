@@ -1,5 +1,5 @@
 import { json } from "../_shared.js";
-import { logWebhook, syncWhoopData, verifyWebhook } from "./_service.js";
+import { logWebhook, syncWhoopData, verifyWebhook } from "../../server/whoop-service.js";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {

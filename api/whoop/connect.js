@@ -1,5 +1,5 @@
 import { env, json, requirePinValue } from "../_shared.js";
-import { WHOOP_AUTH_URL, WHOOP_SCOPES, createOauthState, redirectUri } from "./_service.js";
+import { WHOOP_AUTH_URL, WHOOP_SCOPES, createOauthState, redirectUri } from "../../server/whoop-service.js";
 
 export default async function handler(req, res) {
   const url = new URL(req.url, `https://${req.headers.host}`);

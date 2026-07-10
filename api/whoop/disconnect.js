@@ -1,5 +1,5 @@
 import { json, readJson, requirePin } from "../_shared.js";
-import { disconnectWhoop } from "./_service.js";
+import { disconnectWhoop } from "../../server/whoop-service.js";
 
 export default async function handler(req, res) {
   if (req.method !== "DELETE" && req.method !== "POST") {
