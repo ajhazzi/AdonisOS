@@ -136,6 +136,7 @@ const defaultState = {
     entryDaysAgo(1, { weight: 180.0, notes: "Morning weigh-in." })
   ],
   nutritionLogs: {},
+  nutritionDay: todayIso(),
   savedMeals: [],
   habitLogs: {},
   coachMessages: [
@@ -249,7 +250,6 @@ function handleClick(event) {
   if (action === "cloud-pull") pullCloudState(true);
   if (action === "cloud-push") pushCloudState(true);
   if (action === "reset-data") resetData();
-  if (action === "seed-food") seedFood();
 }
 
 function handleSubmit(event) {
@@ -1007,6 +1007,7 @@ function round1(value) {
 }
 
 function renderNutrition() {
+  ensureNutritionDay();
   const date = todayIso();
   const foods = state.nutritionLogs[date] || [];
   const savedMeals = state.savedMeals || [];
@@ -1096,7 +1097,7 @@ function renderNutrition() {
 
 function saveFood(formData) {
   const date = todayIso();
-  const meal = mealFromForm(formData);
+  const meal = stampMeal(mealFromForm(formData), date);
   if (!meal.name) {
     showToast("Meal needs a name.");
     return;
@@ -1129,6 +1130,14 @@ function cleanMeal(meal) {
   };
 }
 
+function stampMeal(meal, date = todayIso()) {
+  return {
+    ...cleanMeal(meal),
+    logDate: date,
+    loggedAt: new Date().toISOString()
+  };
+}
+
 function roundMacro(value) {
   return Math.round(Number(value || 0) * 10) / 10;
 }
@@ -1154,7 +1163,7 @@ function addSavedMealToToday(id) {
   if (!meal) return;
   const date = todayIso();
   state.nutritionLogs[date] = state.nutritionLogs[date] || [];
-  state.nutritionLogs[date].push(cleanMeal(meal));
+  state.nutritionLogs[date].push(stampMeal(cleanMeal(meal), date));
   saveState();
   renderNutrition();
   showToast(`${meal.name} added.`);
@@ -1202,22 +1211,8 @@ function populateFoodForm(meal) {
 
 function removeFood(index) {
   const date = todayIso();
+  ensureNutritionDay();
   state.nutritionLogs[date].splice(index, 1);
-  saveState();
-  renderNutrition();
-}
-
-function seedFood() {
-  const date = todayIso();
-  const sampleMeals = [
-    { name: "Greek yogurt, berries, whey", calories: 520, protein: 58, carbs: 54, fat: 8 },
-    { name: "Chicken rice bowl", calories: 760, protein: 62, carbs: 86, fat: 18 },
-    { name: "Steak, potatoes, salad", calories: 840, protein: 64, carbs: 74, fat: 28 }
-  ];
-  state.nutritionLogs[date] = sampleMeals;
-  state.savedMeals = [...sampleMeals.map((meal) => ({ ...meal, id: mealId(meal), updatedAt: new Date().toISOString() })), ...(state.savedMeals || [])]
-    .filter((meal, index, meals) => meals.findIndex((item) => item.id === meal.id) === index)
-    .slice(0, 40);
   saveState();
   renderNutrition();
 }
@@ -1851,6 +1846,42 @@ function mergeSavedMeals(localMeals = [], remoteMeals = []) {
     .slice(0, 40);
 }
 
+function normalizeNutritionState(source = {}) {
+  const today = todayIso();
+  const yesterday = isoDaysAgo(1);
+  const logs = { ...(source.nutritionLogs || {}) };
+  const activeDay = source.nutritionDay || "";
+  const todayMeals = Array.isArray(logs[today]) ? logs[today] : [];
+  const legacyTodayMeals = todayMeals.length > 0 && todayMeals.every((meal) => !meal.logDate && !meal.loggedAt);
+
+  if (!activeDay && legacyTodayMeals) {
+    logs[yesterday] = [...(logs[yesterday] || []), ...todayMeals.map((meal) => stampMeal(meal, yesterday))];
+    logs[today] = [];
+  }
+
+  Object.keys(logs).forEach((date) => {
+    logs[date] = (Array.isArray(logs[date]) ? logs[date] : [])
+      .filter((meal) => meal && meal.name)
+      .map((meal) => ({
+        ...cleanMeal(meal),
+        logDate: meal.logDate || date,
+        loggedAt: meal.loggedAt || ""
+      }));
+  });
+
+  logs[today] = (logs[today] || []).filter((meal) => meal.logDate === today);
+  return { nutritionLogs: logs, nutritionDay: today };
+}
+
+function ensureNutritionDay() {
+  const today = todayIso();
+  if (state.nutritionDay === today) return;
+  const normalized = normalizeNutritionState(state);
+  state.nutritionLogs = normalized.nutritionLogs;
+  state.nutritionDay = normalized.nutritionDay;
+  saveState();
+}
+
 function normalizeActiveWorkout(active) {
   if (!active) return null;
   return {
@@ -1868,9 +1899,12 @@ function loadState() {
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
     if (!saved) return structuredClone(defaultState);
+    const nutrition = normalizeNutritionState(saved);
     return {
       ...structuredClone(defaultState),
       ...saved,
+      nutritionLogs: nutrition.nutritionLogs,
+      nutritionDay: nutrition.nutritionDay,
       settings: { ...defaultState.settings, ...(saved.settings || {}) },
       exerciseHistory: saved.exerciseHistory || {},
       morningWeights: saved.morningWeights || seedMorningWeights(saved.progressLogs),
@@ -1919,7 +1953,7 @@ async function pullCloudState(manual = false) {
     const remote = await apiRequest("/api/state");
     if (remote.state) {
       state = hydrateState(remote.state, state);
-      saveState({ localOnly: true });
+      saveState();
       cloudStatus = `Pulled ${remote.updated_at ? new Date(remote.updated_at).toLocaleString() : "cloud state"}`;
       route(currentScreen);
     } else {
@@ -1976,9 +2010,12 @@ async function apiRequest(path, options = {}) {
 }
 
 function hydrateState(nextState, currentState = null) {
+  const nutrition = normalizeNutritionState(nextState);
   return {
     ...structuredClone(defaultState),
     ...nextState,
+    nutritionLogs: nutrition.nutritionLogs,
+    nutritionDay: nutrition.nutritionDay,
     settings: { ...defaultState.settings, ...(nextState.settings || {}) },
     exerciseHistory: nextState.exerciseHistory || {},
     morningWeights: nextState.morningWeights || seedMorningWeights(nextState.progressLogs),

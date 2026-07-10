@@ -1,4 +1,4 @@
-const CACHE_NAME = "adonis-os-v14";
+const CACHE_NAME = "adonis-os-v15";
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(["/", "/manifest.webmanifest", "/adonis-hero-clean.png"])));
