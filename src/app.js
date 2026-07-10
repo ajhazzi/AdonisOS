@@ -139,6 +139,16 @@ const defaultState = {
   nutritionDay: todayIso(),
   savedMeals: [],
   habitLogs: {},
+  whoop: {
+    connected: false,
+    demo: false,
+    connection: null,
+    readiness: null,
+    history: [],
+    lastSync: "",
+    status: "Not connected",
+    error: ""
+  },
   coachMessages: [
     {
       role: "coach",
@@ -168,7 +178,18 @@ function init() {
   route(state.activeWorkout ? "active" : "home");
   startDateRolloverWatch();
   registerServiceWorker();
+  handleWhoopReturn();
   if (getCloudPin()) pullCloudState(false);
+  if (getCloudPin()) loadWhoopLatest(false);
+}
+
+function handleWhoopReturn() {
+  const params = new URLSearchParams(window.location.search);
+  const result = params.get("whoop");
+  if (!result) return;
+  if (result === "connected") showToast("WHOOP connected. Pulling readiness.");
+  if (result === "error") showToast(params.get("message") || "WHOOP connection failed.");
+  window.history.replaceState({}, document.title, window.location.pathname);
 }
 
 function renderShell() {
@@ -187,6 +208,7 @@ function renderShell() {
         <section id="screen-progress" class="screen"></section>
         <section id="screen-nutrition" class="screen"></section>
         <section id="screen-coach" class="screen"></section>
+        <section id="screen-recovery" class="screen"></section>
         <section id="screen-more" class="screen"></section>
       </main>
     </div>
@@ -249,6 +271,13 @@ function handleClick(event) {
   if (action === "clear-coach") clearCoach();
   if (action === "cloud-pull") pullCloudState(true);
   if (action === "cloud-push") pushCloudState(true);
+  if (action === "whoop-connect") connectWhoop();
+  if (action === "whoop-sync") syncWhoop(Number(actionButton.dataset.days || 14));
+  if (action === "whoop-refresh") loadWhoopLatest(true);
+  if (action === "whoop-disconnect") disconnectWhoop(false);
+  if (action === "whoop-delete") disconnectWhoop(true);
+  if (action === "apply-readiness") applyReadinessToWorkout();
+  if (action === "restore-workout") restoreWorkoutPlan();
   if (action === "reset-data") resetData();
 }
 
@@ -286,6 +315,7 @@ function route(screen) {
   if (screen === "progress") renderProgress();
   if (screen === "nutrition") renderNutrition();
   if (screen === "coach") renderCoach();
+  if (screen === "recovery") renderRecovery();
   if (screen === "more") renderMore();
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
@@ -336,6 +366,7 @@ function renderHome() {
         ${goalRow(icons.home, "Shoulders", "48\"+")}
       </div>
     </div>
+    ${whoopReadinessCard("home")}
     <div class="mobile-goals section-panel panel">
       <div class="section-head"><h2>Goals</h2><span class="small">Project Adonis</span></div>
       <div class="stats-grid">
@@ -496,10 +527,256 @@ function renderRecoveryDetail(workout) {
       <ul class="recovery-list">${workout.items.map((item) => `<li>${item}</li>`).join("")}</ul>
     </div>
     <div class="section-panel panel">
+      <div class="section-head"><h2>WHOOP Readiness</h2><button class="link-button" data-route="recovery">Details</button></div>
+      ${whoopReadinessBody()}
+    </div>
+    <div class="section-panel panel">
       <h2 class="panel-title">Daily TVA Routine</h2>
       <ul class="recovery-list">${tvaRoutine.map((item) => `<li>${item}</li>`).join("")}</ul>
     </div>
   `;
+}
+
+function renderRecovery() {
+  byId("screen-recovery").innerHTML = `
+    <button class="back-button" data-route="home">‹ Home</button>
+    <div class="hero-card">
+      <h1>Recovery Intel</h1>
+      <p>WHOOP readiness translated into plain training decisions: push, reduce, or recover.</p>
+    </div>
+    ${whoopReadinessCard("detail")}
+    <div class="section-panel panel">
+      <div class="section-head"><h2>Rules</h2><span class="small">Adonis readiness v1</span></div>
+      <div class="readiness-rules">
+        <div><b>Green</b><span>Recovery above 66% and sleep above 75%: full plan, finishers allowed.</span></div>
+        <div><b>Yellow</b><span>Recovery 34-66% or sleep 60-74%: about 85% volume, no failure chasing.</span></div>
+        <div><b>Red</b><span>Recovery 33% or lower, or sleep below 60%: about 60% volume, no finishers.</span></div>
+      </div>
+    </div>
+    <div class="section-panel panel">
+      <div class="section-head"><h2>Recent Trend</h2><button class="link-button" data-action="whoop-sync" data-days="30">Sync 30d</button></div>
+      <div class="whoop-history">
+        ${(state.whoop?.history || []).slice(0, 7).map(whoopHistoryRow).join("") || `<div class="empty">No WHOOP trend yet. Sync after connecting.</div>`}
+      </div>
+    </div>
+  `;
+}
+
+function whoopReadinessCard(mode = "home") {
+  return `
+    <div class="section-panel panel whoop-card ${readinessClass()}">
+      <div class="section-head">
+        <h2>Today's Adonis Readiness</h2>
+        <button class="link-button" data-route="recovery">${mode === "home" ? "Details" : "Close Read"}</button>
+      </div>
+      ${whoopReadinessBody()}
+    </div>
+  `;
+}
+
+function whoopReadinessBody() {
+  const whoop = state.whoop || {};
+  const readiness = whoop.readiness;
+  if (!readiness) {
+    return `
+      <div class="whoop-empty">
+        <div>
+          <b>WHOOP not feeding the machine yet.</b>
+          <span>Connect it once, then Adonis OS will pull recovery, sleep, strain, and workout data into your daily plan.</span>
+        </div>
+        <div class="button-row">
+          <button class="button primary" data-action="whoop-connect">Connect WHOOP</button>
+          <button class="button secondary" data-action="whoop-sync">Sync</button>
+        </div>
+      </div>
+    `;
+  }
+  return `
+    <div class="readiness-score">
+      <div class="readiness-ring ${readinessClass()}" style="--score:${Number(readiness.recovery_score || 0)}%">
+        <b>${readiness.recovery_score ?? "--"}</b>
+        <span>Recovery</span>
+      </div>
+      <div>
+        <div class="eyebrow">${readiness.readiness_level || "pending"}</div>
+        <h3>${readiness.recommended_action || "Recovery score pending"}</h3>
+        <p>${readiness.recommendation_reason || "Waiting on WHOOP data."}</p>
+      </div>
+    </div>
+    <div class="stats-grid compact-stats">
+      ${statCard("Sleep", `${readiness.sleep_performance_percentage ?? "--"}%`, `${readiness.sleep_duration_hours ?? "--"} h total`)}
+      ${statCard("HRV", `${readiness.hrv_rmssd ?? "--"}`, "RMSSD")}
+      ${statCard("RHR", `${readiness.resting_heart_rate ?? "--"}`, "Resting bpm")}
+      ${statCard("Strain", `${readiness.cycle_strain ?? "--"}`, "Current cycle")}
+    </div>
+    <div class="button-row">
+      <button class="button secondary" data-action="whoop-sync">Sync WHOOP</button>
+      <button class="button primary" data-route="recovery">Why This?</button>
+    </div>
+  `;
+}
+
+function workoutReadinessPrescription() {
+  const readiness = state.whoop?.readiness;
+  if (!readiness) return "";
+  const active = state.activeWorkout || {};
+  const applied = active.readinessApplied?.date === readiness.date;
+  return `
+    <div class="section-panel panel workout-readiness ${readinessClass()}">
+      <div class="section-head">
+        <h2>${readiness.recommended_action}</h2>
+        <span class="small">${readiness.recommended_rir} · ${Math.round(Number(readiness.volume_multiplier || 1) * 100)}% volume</span>
+      </div>
+      <p class="small">${readiness.recommendation_reason}</p>
+      <div class="button-row">
+        <button class="button ${applied ? "secondary" : "primary"}" data-action="apply-readiness">${applied ? "Applied" : "Apply to Workout"}</button>
+        <button class="button secondary" data-action="restore-workout">Full Plan</button>
+      </div>
+    </div>
+  `;
+}
+
+function readinessClass(readiness = state.whoop?.readiness) {
+  return `ready-${readiness?.readiness_level || "pending"}`;
+}
+
+function whoopHistoryRow(row) {
+  return `<div class="history-row"><strong>${row.date}</strong><div class="meta">${row.recovery_score ?? "--"}% recovery · ${row.sleep_performance_percentage ?? "--"}% sleep · ${row.recommended_action || "pending"}</div></div>`;
+}
+
+async function connectWhoop() {
+  const pin = getCloudPin();
+  if (!pin) {
+    showToast("Save your app PIN in More first.");
+    route("more");
+    return;
+  }
+  window.location.href = `/api/whoop/connect?pin=${encodeURIComponent(pin)}`;
+}
+
+async function loadWhoopLatest(manual = false) {
+  if (!getCloudPin()) return;
+  try {
+    const data = await apiRequest("/api/whoop/latest");
+    setWhoopState(data);
+    if (manual) showToast("WHOOP readiness refreshed.");
+    if (currentScreen === "home" || currentScreen === "more" || currentScreen === "recovery" || currentScreen === "active") route(currentScreen);
+  } catch (error) {
+    state.whoop = { ...normalizeWhoop(state.whoop), error: error.message, status: error.message || "WHOOP unavailable" };
+    if (manual) showToast(state.whoop.status);
+  }
+}
+
+async function syncWhoop(days = 14) {
+  if (!getCloudPin()) {
+    showToast("Save your app PIN in More first.");
+    route("more");
+    return;
+  }
+  showToast("Syncing WHOOP...");
+  try {
+    const data = await apiRequest("/api/whoop/sync", {
+      method: "POST",
+      body: JSON.stringify({ days })
+    });
+    state.whoop = {
+      ...normalizeWhoop(state.whoop),
+      connected: true,
+      demo: Boolean(data.readiness?.demo),
+      readiness: data.readiness || null,
+      lastSync: new Date().toISOString(),
+      status: data.readiness?.demo ? "Demo WHOOP synced" : "WHOOP synced",
+      error: ""
+    };
+    await loadWhoopHistory(days);
+    saveState();
+    route(currentScreen);
+    showToast(state.whoop.status);
+  } catch (error) {
+    state.whoop = { ...normalizeWhoop(state.whoop), error: error.message, status: error.message || "WHOOP sync failed" };
+    saveState();
+    if (currentScreen === "more" || currentScreen === "recovery") route(currentScreen);
+    showToast(state.whoop.status);
+  }
+}
+
+async function loadWhoopHistory(days = 30) {
+  try {
+    const data = await apiRequest(`/api/whoop/history?days=${encodeURIComponent(days)}`);
+    state.whoop = { ...normalizeWhoop(state.whoop), history: data.records || [] };
+  } catch {
+    state.whoop = normalizeWhoop(state.whoop);
+  }
+}
+
+async function disconnectWhoop(deleteData = false) {
+  if (!getCloudPin()) {
+    showToast("Save your app PIN first.");
+    return;
+  }
+  if (deleteData && !confirm("Disconnect WHOOP and delete stored WHOOP data?")) return;
+  try {
+    await apiRequest("/api/whoop/disconnect", {
+      method: "POST",
+      body: JSON.stringify({ deleteData })
+    });
+    state.whoop = normalizeWhoop({ status: deleteData ? "WHOOP data deleted" : "WHOOP disconnected" });
+    saveState();
+    route(currentScreen);
+    showToast(state.whoop.status);
+  } catch (error) {
+    showToast(error.message || "WHOOP disconnect failed");
+  }
+}
+
+function setWhoopState(data) {
+  state.whoop = {
+    ...normalizeWhoop(state.whoop),
+    connected: Boolean(data.connection?.connected || data.connected),
+    connection: data.connection || null,
+    readiness: data.readiness || state.whoop?.readiness || null,
+    lastSync: data.connection?.last_synced_at || state.whoop?.lastSync || "",
+    status: data.connection?.connected ? "WHOOP connected" : "WHOOP not connected",
+    error: data.connection?.last_sync_error || ""
+  };
+  saveState();
+}
+
+function applyReadinessToWorkout() {
+  const active = state.activeWorkout;
+  const readiness = state.whoop?.readiness;
+  if (!active || !readiness) return;
+  const multiplier = Number(readiness.volume_multiplier || 1);
+  const workout = getWorkout(active.workoutId);
+  active.exerciseOverrides = active.exerciseOverrides || {};
+  workout.exercises.forEach((exercise, index) => {
+    const preserveMainLift = index < 2;
+    const nextSets = preserveMainLift ? exercise.sets : Math.max(1, Math.round(exercise.sets * multiplier));
+    active.exerciseOverrides[exercise.id] = {
+      ...exercise,
+      sets: nextSets,
+      cue: `${exercise.cue} Readiness: ${readiness.recommended_action}, ${readiness.recommended_rir}.`
+    };
+  });
+  active.readinessApplied = {
+    date: readiness.date,
+    level: readiness.readiness_level,
+    volumeMultiplier: multiplier,
+    action: readiness.recommended_action
+  };
+  saveState();
+  renderActiveWorkout();
+  showToast("Readiness applied to this workout.");
+}
+
+function restoreWorkoutPlan() {
+  const active = state.activeWorkout;
+  if (!active) return;
+  active.exerciseOverrides = {};
+  active.readinessApplied = null;
+  saveState();
+  renderActiveWorkout();
+  showToast("Full workout plan restored.");
 }
 
 function startWorkout(workoutId) {
@@ -550,6 +827,7 @@ function renderActiveWorkout() {
       <div id="rest-timer" class="rest-timer">ready</div>
       ${paused ? `<div class="pause-badge">Workout paused. Timers are frozen.</div>` : ""}
     </div>
+    ${workoutReadinessPrescription()}
     ${exercises.map((exercise) => activeExerciseCard(workout, exercise, active)).join("")}
     <div class="button-row">
       <button class="button secondary" data-action="cancel-workout">Cancel</button>
@@ -791,6 +1069,7 @@ function finishWorkout() {
     workoutName: getWorkout(active.workoutId).name,
     date: new Date().toISOString(),
     durationSec: activeWorkoutElapsedSec(active),
+    readinessApplied: active.readinessApplied || null,
     sets: active.sets
   });
   state.activeWorkout = null;
@@ -1414,7 +1693,7 @@ function coachDirective(context) {
 function coachContext() {
   const latest = latestProgress();
   const previous = previousProgress() || latest;
-  const foods = state.nutritionLogs[todayIso()] || [];
+  const foods = foodsForDate(todayIso());
   const totals = macroTotals(foods);
   const habitToday = habitScore(todayIso());
   const recentWorkouts = state.workoutLogs.filter((log) => daysBetween(log.date.slice(0, 10), todayIso()) < 7).length;
@@ -1427,8 +1706,10 @@ function coachContext() {
   const habitLine = habitToday >= 80 ? "Daily habits are tight." : `${habitToday}% habit score today. Recovery basics are leaking.`;
   const nutritionLine = foods.length ? `${totals.calories} kcal logged, ${Math.max(0, calorieRemaining)} kcal remaining, protein at ${totals.protein}g.` : "No food logged today. I cannot coach invisible meals.";
   const biggestRisk = latest.waist > 34 ? "waist is over the guardrail" : waistDelta > 0.4 ? "waist is climbing faster than your standards should allow" : recentWorkouts < 3 ? "training consistency is too low" : habitToday < 70 ? "recovery habits are sloppy" : "complacency, because the data is decent enough to make you lazy";
-  const primaryInsight = `Current data says ${fmt(latest.weight)} lb, ${fmt(latest.waist)}\" waist, ${fmt(latest.shoulders)}\" shoulders, ${fmt(latest.bodyFat)}% body fat. Goal is 180-182 lb with a 33\" waist and 48\"+ shoulders, so we build, but we do not bulk like a man with no mirror.`;
-  return { latest, previous, totals, habitScore: habitToday, recentWorkouts, waistDelta, bodyFatDelta, calorieRemaining, waistLine, bodyFatLine, trainingLine, habitLine, nutritionLine, biggestRisk, primaryInsight };
+  const readiness = state.whoop?.readiness || null;
+  const whoopLine = readiness ? `WHOOP says ${readiness.readiness_level}: ${readiness.recovery_score ?? "--"}% recovery, ${readiness.sleep_performance_percentage ?? "--"}% sleep, ${readiness.recommended_action}.` : "WHOOP is not connected yet.";
+  const primaryInsight = `Current data says ${fmt(latest.weight)} lb, ${fmt(latest.waist)}\" waist, ${fmt(latest.shoulders)}\" shoulders, ${fmt(latest.bodyFat)}% body fat. ${whoopLine} Goal is 180-182 lb with a 33\" waist and 48\"+ shoulders, so we build, but we do not bulk like a man with no mirror.`;
+  return { latest, previous, totals, habitScore: habitToday, recentWorkouts, waistDelta, bodyFatDelta, calorieRemaining, waistLine, bodyFatLine, trainingLine, habitLine, nutritionLine, biggestRisk, primaryInsight, whoop: state.whoop || {}, whoopLine };
 }
 
 function trendLine(delta, label, unit, lowerIsGood) {
@@ -1451,6 +1732,10 @@ function renderMore() {
         <p class="small">She reads your measurements, workouts, nutrition, and habits. No cheerleading if the waist is moving the wrong way.</p>
       </div>
       <button class="button primary" data-route="coach">Open Coach Chat</button>
+    </div>
+    <div class="section-panel panel">
+      <div class="section-head"><h2>Integrations</h2><span class="small">${state.whoop?.status || "WHOOP ready"}</span></div>
+      ${whoopIntegrationPanel()}
     </div>
     <div class="section-panel panel">
       <div class="section-head"><h2>Cloud Sync</h2><span class="small">${cloudStatus}</span></div>
@@ -1491,6 +1776,36 @@ function renderMore() {
       <div class="workout-list">${state.workoutLogs.length ? state.workoutLogs.slice(0, 8).map(historyRow).join("") : `<div class="empty">No completed workouts yet.</div>`}</div>
     </div>
     <button class="button danger" data-action="reset-data">Reset App Data</button>
+  `;
+}
+
+function whoopIntegrationPanel() {
+  const whoop = normalizeWhoop(state.whoop);
+  const readiness = whoop.readiness;
+  const connectedText = whoop.connected ? "Connected" : "Not connected";
+  return `
+    <div class="integration-row">
+      <div>
+        <strong>WHOOP</strong>
+        <span>${connectedText}${whoop.lastSync ? ` · Last sync ${new Date(whoop.lastSync).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : ""}</span>
+        <p class="small">${readiness ? `${readiness.recommended_action}: ${readiness.recovery_score ?? "--"}% recovery, ${readiness.sleep_performance_percentage ?? "--"}% sleep.` : "Feeds recovery, sleep, strain, HRV, resting heart rate, and workouts into Adonis OS."}</p>
+      </div>
+      <div class="pills">
+        <span class="pill">Recovery</span>
+        <span class="pill">Sleep</span>
+        <span class="pill">Strain</span>
+        <span class="pill">Workouts</span>
+      </div>
+    </div>
+    <div class="button-row">
+      <button class="button primary" data-action="whoop-connect">${whoop.connected ? "Reconnect" : "Connect WHOOP"}</button>
+      <button class="button secondary" data-action="whoop-sync" data-days="30">Sync 30 Days</button>
+    </div>
+    <div class="button-row">
+      <button class="button secondary" data-route="recovery">Recovery Details</button>
+      <button class="button secondary" data-action="whoop-disconnect">Disconnect</button>
+    </div>
+    ${whoop.error ? `<p class="form-help danger-text">${escapeHtml(whoop.error)}</p>` : `<p class="form-help">Use the same app PIN saved above. Vercel needs the WHOOP and Supabase environment variables before connecting.</p>`}
   `;
 }
 
@@ -1907,6 +2222,19 @@ function normalizeActiveWorkout(active) {
   };
 }
 
+function normalizeWhoop(whoop = {}) {
+  return {
+    connected: Boolean(whoop.connected || whoop.connection?.connected),
+    demo: Boolean(whoop.demo),
+    connection: whoop.connection || null,
+    readiness: whoop.readiness || null,
+    history: Array.isArray(whoop.history) ? whoop.history : [],
+    lastSync: whoop.lastSync || whoop.connection?.last_synced_at || "",
+    status: whoop.status || (whoop.connected || whoop.connection?.connected ? "WHOOP connected" : "Not connected"),
+    error: whoop.error || ""
+  };
+}
+
 function loadState() {
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
@@ -1923,6 +2251,7 @@ function loadState() {
       activeWorkout: normalizeActiveWorkout(saved.activeWorkout),
       savedMeals: normalizeSavedMeals(saved.savedMeals),
       habitLogs: saved.habitLogs || {},
+      whoop: normalizeWhoop(saved.whoop),
       coachMessages: saved.coachMessages?.length ? saved.coachMessages : structuredClone(defaultState.coachMessages)
     };
   } catch {
@@ -2034,6 +2363,7 @@ function hydrateState(nextState, currentState = null) {
     activeWorkout: normalizeActiveWorkout(nextState.activeWorkout),
     savedMeals: mergeSavedMeals(currentState?.savedMeals || [], nextState.savedMeals || []),
     habitLogs: nextState.habitLogs || {},
+    whoop: normalizeWhoop(nextState.whoop),
     coachMessages: nextState.coachMessages?.length ? nextState.coachMessages : structuredClone(defaultState.coachMessages)
   };
 }

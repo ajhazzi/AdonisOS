@@ -39,6 +39,7 @@ If the Home Screen app stops loading later:
 - Nutrition logging with calorie and macro targets, remaining macros, trend cards, reverse diet guardrails, and coach note
 - Coach Valentina chat with local fallback plus deploy-ready OpenAI vision/chat backend
 - Supabase-backed cloud sync through protected `/api/state`
+- WHOOP integration for recovery, sleep, strain, readiness, and workout volume guidance
 - Bottom tab navigation and PWA manifest/service worker
 
 ## Data
@@ -53,17 +54,7 @@ The app includes Vercel-style API functions under `api/`.
 
 ### 1. Create The Supabase Table
 
-In Supabase SQL Editor, run:
-
-```sql
-create table if not exists public.app_state (
-  id text primary key,
-  state jsonb not null,
-  updated_at timestamptz not null default now()
-);
-
-alter table public.app_state enable row level security;
-```
+In Supabase SQL Editor, run the full contents of `supabase-schema.sql`.
 
 The serverless API uses your Supabase service role key server-side, so no public table policy is needed.
 
@@ -78,6 +69,15 @@ SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your-supabase-service-role-key
 ADONIS_APP_PIN=choose-a-private-pin
 ADONIS_USER_ID=aj-hazzi
+
+APP_BASE_URL=https://adonis-os.vercel.app
+TOKEN_ENCRYPTION_KEY=make-this-a-long-private-random-secret
+
+WHOOP_CLIENT_ID=your-whoop-client-id
+WHOOP_CLIENT_SECRET=your-whoop-client-secret
+WHOOP_REDIRECT_URI=https://adonis-os.vercel.app/api/whoop/callback
+WHOOP_WEBHOOK_SECRET=optional-webhook-secret
+WHOOP_DEMO_MODE=false
 ```
 
 ### 3. Use The App PIN
@@ -90,3 +90,15 @@ From then on:
 - Opening the app auto-pulls cloud data.
 - Coach Valentina calls `/api/coach-chat` and uses OpenAI when available.
 - If the backend is unavailable, the local fallback coach still responds.
+
+## WHOOP Setup
+
+Create a WHOOP Developer app and set its callback/redirect URL to:
+
+```text
+https://adonis-os.vercel.app/api/whoop/callback
+```
+
+Then add the WHOOP variables above in Vercel, redeploy, open **More -> Cloud Sync** to save your app PIN, then open **More -> Integrations -> Connect WHOOP**.
+
+WHOOP data is stored in Supabase as raw cycles, recoveries, sleeps, workouts, and a daily Adonis readiness row. The app uses that readiness to show Home recovery status and optional workout volume adjustments.

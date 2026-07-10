@@ -1,4 +1,4 @@
-import { env, json, readJson, requirePin } from "./_shared.js";
+import { json, readJson, requirePin, supabaseRequest } from "./_shared.js";
 
 const rowId = process.env.ADONIS_USER_ID || "aj-hazzi";
 
@@ -33,25 +33,4 @@ export default async function handler(req, res) {
   } catch (error) {
     json(res, 500, { error: error.message || "State API failed" });
   }
-}
-
-async function supabaseRequest(path, options) {
-  const url = `${env("SUPABASE_URL")}${path}`;
-  const key = env("SUPABASE_SERVICE_ROLE_KEY");
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      apikey: key,
-      Authorization: `Bearer ${key}`,
-      "Content-Type": "application/json",
-      ...(options.headers || {})
-    }
-  });
-
-  if (!response.ok) {
-    throw new Error(`Supabase ${response.status}: ${await response.text()}`);
-  }
-
-  const text = await response.text();
-  return text ? JSON.parse(text) : null;
 }

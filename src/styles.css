@@ -686,6 +686,128 @@ button {
   margin: 5px 0 6px;
 }
 
+.whoop-card,
+.workout-readiness {
+  overflow: hidden;
+}
+
+.readiness-score {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  gap: 14px;
+  align-items: center;
+}
+
+.readiness-score h3 {
+  margin: 4px 0 6px;
+  font-size: 1.18rem;
+}
+
+.readiness-score p,
+.whoop-empty span {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.42;
+}
+
+.readiness-ring {
+  width: 92px;
+  height: 92px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  background:
+    radial-gradient(circle at center, #101010 0 58%, transparent 60%),
+    conic-gradient(var(--orange) var(--score), rgba(255, 255, 255, 0.12) 0);
+  border: 1px solid var(--line);
+}
+
+.readiness-ring b {
+  font-size: 1.65rem;
+  line-height: 1;
+}
+
+.readiness-ring span {
+  color: var(--muted);
+  font-size: 0.66rem;
+  text-transform: uppercase;
+}
+
+.ready-green .readiness-ring {
+  background:
+    radial-gradient(circle at center, #101010 0 58%, transparent 60%),
+    conic-gradient(var(--green) var(--score), rgba(255, 255, 255, 0.12) 0);
+}
+
+.ready-yellow .readiness-ring {
+  background:
+    radial-gradient(circle at center, #101010 0 58%, transparent 60%),
+    conic-gradient(var(--orange-2) var(--score), rgba(255, 255, 255, 0.12) 0);
+}
+
+.ready-red .readiness-ring {
+  background:
+    radial-gradient(circle at center, #101010 0 58%, transparent 60%),
+    conic-gradient(var(--danger) var(--score), rgba(255, 255, 255, 0.12) 0);
+}
+
+.compact-stats {
+  margin-top: 14px;
+}
+
+.compact-stats .stat-card {
+  min-height: 102px;
+}
+
+.whoop-empty,
+.integration-row {
+  display: grid;
+  gap: 12px;
+}
+
+.integration-row strong {
+  display: block;
+  font-size: 1.05rem;
+}
+
+.integration-row span {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.readiness-rules,
+.whoop-history {
+  display: grid;
+  gap: 10px;
+}
+
+.readiness-rules div {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.readiness-rules b,
+.readiness-rules span {
+  display: block;
+}
+
+.readiness-rules span {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.4;
+}
+
+.danger-text {
+  color: #ffb4b4;
+}
+
 .bottom-nav {
   position: fixed;
   z-index: 70;
