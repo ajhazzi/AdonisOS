@@ -608,6 +608,8 @@ function whoopReadinessBody() {
       ${statCard("HRV", `${readiness.hrv_rmssd ?? "--"}`, "RMSSD")}
       ${statCard("RHR", `${readiness.resting_heart_rate ?? "--"}`, "Resting bpm")}
       ${statCard("Strain", `${readiness.cycle_strain ?? "--"}`, "Current cycle")}
+      ${statCard("Steps", readiness.steps ? `${Math.round(readiness.steps).toLocaleString()}` : "--", "WHOOP daily")}
+      ${statCard("Burn", readiness.calories_burned ? `${readiness.calories_burned} kcal` : "--", "WHOOP cycle")}
     </div>
     <div class="button-row">
       <button class="button secondary" data-action="whoop-sync">Sync WHOOP</button>
@@ -1291,6 +1293,7 @@ function renderNutrition() {
   const foods = foodsForDate(date);
   const savedMeals = state.savedMeals || [];
   const totals = macroTotals(foods);
+  const energy = dailyEnergyLedger(totals);
   const targets = state.settings;
   byId("screen-nutrition").innerHTML = `
     <div class="hero-card">
@@ -1311,6 +1314,16 @@ function renderNutrition() {
         ${bar("Carbs", totals.carbs, targets.carbTarget, "green")}
         ${bar("Fat", totals.fat, targets.fatTarget, "orange")}
       </div>
+    </div>
+    <div class="section-panel panel energy-ledger ${energy.balanceClass}">
+      <div class="section-head"><h2>Energy Balance</h2><button class="link-button" data-action="whoop-sync">Sync WHOOP</button></div>
+      <div class="stats-grid">
+        ${statCard("Calories In", `${energy.caloriesIn} kcal`, "Food logged today")}
+        ${statCard("Calories Out", energy.caloriesOut ? `${energy.caloriesOut} kcal` : "--", energy.outSource)}
+        ${statCard("Balance", energy.balanceText, energy.balanceLabel)}
+        ${statCard("Steps", energy.steps ? energy.steps.toLocaleString() : "--", "WHOOP if available")}
+      </div>
+      <p class="form-help">${energy.note}</p>
     </div>
     <div class="section-panel panel">
       <div class="section-head"><h2>Add Food</h2><span class="small">${date}</span></div>
@@ -1707,9 +1720,11 @@ function coachContext() {
   const nutritionLine = foods.length ? `${totals.calories} kcal logged, ${Math.max(0, calorieRemaining)} kcal remaining, protein at ${totals.protein}g.` : "No food logged today. I cannot coach invisible meals.";
   const biggestRisk = latest.waist > 34 ? "waist is over the guardrail" : waistDelta > 0.4 ? "waist is climbing faster than your standards should allow" : recentWorkouts < 3 ? "training consistency is too low" : habitToday < 70 ? "recovery habits are sloppy" : "complacency, because the data is decent enough to make you lazy";
   const readiness = state.whoop?.readiness || null;
-  const whoopLine = readiness ? `WHOOP says ${readiness.readiness_level}: ${readiness.recovery_score ?? "--"}% recovery, ${readiness.sleep_performance_percentage ?? "--"}% sleep, ${readiness.recommended_action}.` : "WHOOP is not connected yet.";
+  const energy = dailyEnergyLedger(totals);
+  const energyLine = energy.balance === null ? "Energy balance is unavailable until WHOOP burn syncs." : `Energy balance today is ${energy.balanceText}: ${energy.caloriesIn} in vs ${energy.caloriesOut} out.`;
+  const whoopLine = readiness ? `WHOOP says ${readiness.readiness_level}: ${readiness.recovery_score ?? "--"}% recovery, ${readiness.sleep_performance_percentage ?? "--"}% sleep, ${readiness.steps ? Math.round(readiness.steps).toLocaleString() : "--"} steps, ${readiness.calories_burned ?? "--"} kcal burned, ${readiness.recommended_action}. ${energyLine}` : "WHOOP is not connected yet.";
   const primaryInsight = `Current data says ${fmt(latest.weight)} lb, ${fmt(latest.waist)}\" waist, ${fmt(latest.shoulders)}\" shoulders, ${fmt(latest.bodyFat)}% body fat. ${whoopLine} Goal is 180-182 lb with a 33\" waist and 48\"+ shoulders, so we build, but we do not bulk like a man with no mirror.`;
-  return { latest, previous, totals, habitScore: habitToday, recentWorkouts, waistDelta, bodyFatDelta, calorieRemaining, waistLine, bodyFatLine, trainingLine, habitLine, nutritionLine, biggestRisk, primaryInsight, whoop: state.whoop || {}, whoopLine };
+  return { latest, previous, totals, habitScore: habitToday, recentWorkouts, waistDelta, bodyFatDelta, calorieRemaining, waistLine, bodyFatLine, trainingLine, habitLine, nutritionLine, biggestRisk, primaryInsight, whoop: state.whoop || {}, whoopLine, energy };
 }
 
 function trendLine(delta, label, unit, lowerIsGood) {
@@ -2030,6 +2045,32 @@ function weeklyNutritionTrend() {
     statCard("Avg Carbs", `${Math.round(avg.carbs / divisor)}g`, "Daily average"),
     statCard("Avg Fat", `${Math.round(avg.fat / divisor)}g`, "Daily average")
   ].join("");
+}
+
+function dailyEnergyLedger(totals) {
+  const readiness = state.whoop?.readiness || {};
+  const caloriesIn = Math.round(Number(totals.calories || 0));
+  const whoopOut = Number(readiness.calories_burned || 0);
+  const workoutOut = Number(readiness.workout_calories || 0);
+  const caloriesOut = whoopOut || workoutOut || 0;
+  const balance = caloriesOut ? caloriesIn - Math.round(caloriesOut) : null;
+  const surplus = balance !== null && balance >= 0;
+  return {
+    caloriesIn,
+    caloriesOut: caloriesOut ? Math.round(caloriesOut) : null,
+    workoutCalories: workoutOut ? Math.round(workoutOut) : null,
+    steps: readiness.steps ? Math.round(Number(readiness.steps)) : null,
+    balance,
+    balanceText: balance === null ? "--" : `${surplus ? "+" : ""}${balance} kcal`,
+    balanceLabel: balance === null ? "Needs WHOOP sync" : surplus ? "Surplus today" : "Deficit today",
+    balanceClass: balance === null ? "neutral" : surplus ? "surplus" : "deficit",
+    outSource: whoopOut ? `Includes ${Math.round(workoutOut || 0)} workout kcal` : workoutOut ? "Workout burn only" : "Needs WHOOP sync",
+    note: whoopOut
+      ? "Calories out uses WHOOP daily cycle burn. Workout calories are shown as part of that burn so they are not counted twice."
+      : workoutOut
+        ? "WHOOP daily cycle burn is missing, so this is using workout burn only. Treat it as incomplete."
+        : "Connect or sync WHOOP to calculate calories in versus out."
+  };
 }
 
 function foodsForDate(date) {

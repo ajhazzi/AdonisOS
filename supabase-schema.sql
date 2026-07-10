@@ -42,6 +42,8 @@ create table if not exists public.whoop_cycles (
   timezone_offset text,
   strain numeric,
   kilojoules numeric,
+  calories_burned numeric,
+  steps numeric,
   average_heart_rate numeric,
   max_heart_rate numeric,
   score_state text,
@@ -108,6 +110,7 @@ create table if not exists public.whoop_workouts (
   average_heart_rate numeric,
   max_heart_rate numeric,
   kilojoules numeric,
+  calories_burned numeric,
   distance_meters numeric,
   altitude_gain_meters numeric,
   percent_recorded numeric,
@@ -138,6 +141,9 @@ create table if not exists public.adonis_daily_readiness (
   hrv_rmssd numeric,
   resting_heart_rate numeric,
   cycle_strain numeric,
+  calories_burned numeric,
+  workout_calories numeric,
+  steps numeric,
   readiness_level text,
   recommended_action text,
   recommended_rir text,
@@ -173,6 +179,13 @@ alter table public.whoop_workouts enable row level security;
 alter table public.whoop_webhook_events enable row level security;
 alter table public.adonis_daily_readiness enable row level security;
 alter table public.adonis_whoop_workout_matches enable row level security;
+
+alter table public.whoop_cycles add column if not exists calories_burned numeric;
+alter table public.whoop_cycles add column if not exists steps numeric;
+alter table public.whoop_workouts add column if not exists calories_burned numeric;
+alter table public.adonis_daily_readiness add column if not exists calories_burned numeric;
+alter table public.adonis_daily_readiness add column if not exists workout_calories numeric;
+alter table public.adonis_daily_readiness add column if not exists steps numeric;
 
 -- The Vercel API uses SUPABASE_SERVICE_ROLE_KEY server-side, so no public RLS
 -- policy is required for these private app tables.

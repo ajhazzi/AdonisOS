@@ -248,6 +248,8 @@ export function mapCycle(cycle) {
     timezone_offset: cycle.timezone_offset || null,
     strain: numberOrNull(cycle.score?.strain),
     kilojoules: numberOrNull(cycle.score?.kilojoule),
+    calories_burned: kjToCalories(cycle.score?.kilojoule),
+    steps: numberOrNull(cycle.score?.steps ?? cycle.score?.step_count ?? cycle.steps ?? cycle.step_count),
     average_heart_rate: numberOrNull(cycle.score?.average_heart_rate),
     max_heart_rate: numberOrNull(cycle.score?.max_heart_rate),
     score_state: cycle.score_state || null,
@@ -310,6 +312,7 @@ export function mapWorkout(workout) {
     average_heart_rate: numberOrNull(workout.score?.average_heart_rate),
     max_heart_rate: numberOrNull(workout.score?.max_heart_rate),
     kilojoules: numberOrNull(workout.score?.kilojoule),
+    calories_burned: kjToCalories(workout.score?.kilojoule),
     distance_meters: numberOrNull(workout.score?.distance_meter),
     altitude_gain_meters: numberOrNull(workout.score?.altitude_gain_meter),
     percent_recorded: numberOrNull(workout.score?.percent_recorded),
@@ -326,6 +329,12 @@ export async function buildReadiness(data) {
   const hrv = numberOrNull(latestRecovery?.score?.hrv_rmssd_milli);
   const restingHr = numberOrNull(latestRecovery?.score?.resting_heart_rate);
   const strain = numberOrNull(latestCycle?.score?.strain);
+  const cycleDate = dateKey(latestCycle?.end || latestCycle?.start || new Date().toISOString());
+  const caloriesBurned = kjToCalories(latestCycle?.score?.kilojoule);
+  const steps = numberOrNull(latestCycle?.score?.steps ?? latestCycle?.score?.step_count ?? latestCycle?.steps ?? latestCycle?.step_count);
+  const workoutCalories = (data.workouts || [])
+    .filter((workout) => dateKey(workout.end || workout.start) === cycleDate)
+    .reduce((sum, workout) => sum + Number(kjToCalories(workout.score?.kilojoule) || 0), 0);
   const sleepSummary = latestSleep?.score?.stage_summary || {};
   const sleepMs = Number(sleepSummary.total_light_sleep_time_milli || 0) + Number(sleepSummary.total_slow_wave_sleep_time_milli || 0) + Number(sleepSummary.total_rem_sleep_time_milli || 0);
   const date = dateKey(latestRecovery?.updated_at || latestSleep?.end || latestCycle?.end || new Date().toISOString());
@@ -339,6 +348,9 @@ export async function buildReadiness(data) {
     hrv_rmssd: hrv,
     resting_heart_rate: restingHr,
     cycle_strain: strain,
+    calories_burned: caloriesBurned,
+    workout_calories: Math.round(workoutCalories) || null,
+    steps,
     rules_version: RULES_VERSION,
     ...recommendation,
     source: data.demo ? "demo" : "whoop",
@@ -483,6 +495,11 @@ function numberOrNull(value) {
   return Number.isFinite(number) ? number : null;
 }
 
+function kjToCalories(value) {
+  const kj = numberOrNull(value);
+  return kj === null ? null : Math.round(kj / 4.184);
+}
+
 function demoWhoopData(days) {
   const now = new Date();
   const cycles = [];
@@ -494,7 +511,7 @@ function demoWhoopData(days) {
     const recovery = index % 6 === 0 ? 31 : index % 3 === 0 ? 55 : 78;
     const sleep = index % 5 === 0 ? 58 : index % 3 === 0 ? 70 : 86;
     const cycleId = 9000 + index;
-    cycles.push({ id: cycleId, start: new Date(day.getTime() - 20 * 3600000).toISOString(), end: day.toISOString(), score_state: "SCORED", score: { strain: 8 + (index % 5), kilojoule: 7000, average_heart_rate: 68, max_heart_rate: 142 } });
+    cycles.push({ id: cycleId, start: new Date(day.getTime() - 20 * 3600000).toISOString(), end: day.toISOString(), score_state: "SCORED", score: { strain: 8 + (index % 5), kilojoule: 10800 + index * 120, steps: 8200 + index * 450, average_heart_rate: 68, max_heart_rate: 142 } });
     recoveries.push({ cycle_id: cycleId, sleep_id: `demo-sleep-${index}`, updated_at: day.toISOString(), score_state: "SCORED", score: { recovery_score: recovery, resting_heart_rate: 50 + (index % 5), hrv_rmssd_milli: 35 + (index % 12), spo2_percentage: 97 } });
     sleeps.push({ id: `demo-sleep-${index}`, cycle_id: cycleId, start: new Date(day.getTime() - 8 * 3600000).toISOString(), end: day.toISOString(), nap: false, score_state: "SCORED", score: { sleep_performance_percentage: sleep, sleep_efficiency_percentage: 88, sleep_consistency_percentage: 82, stage_summary: { total_light_sleep_time_milli: 14400000, total_slow_wave_sleep_time_milli: 7200000, total_rem_sleep_time_milli: 5400000, total_awake_time_milli: 1800000, total_in_bed_time_milli: 28800000, sleep_cycle_count: 4, disturbance_count: 10 } } });
     if (index % 2 === 0) workouts.push({ id: `demo-workout-${index}`, start: new Date(day.getTime() - 5 * 3600000).toISOString(), end: new Date(day.getTime() - 4 * 3600000).toISOString(), sport_id: 42, sport_name: "Weightlifting", score: { strain: 9 + (index % 4), average_heart_rate: 118, max_heart_rate: 154, kilojoule: 1800 } });
