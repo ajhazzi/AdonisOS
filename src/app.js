@@ -1009,7 +1009,7 @@ function round1(value) {
 function renderNutrition() {
   ensureNutritionDay();
   const date = todayIso();
-  const foods = state.nutritionLogs[date] || [];
+  const foods = foodsForDate(date);
   const savedMeals = state.savedMeals || [];
   const totals = macroTotals(foods);
   const targets = state.settings;
@@ -1212,6 +1212,7 @@ function populateFoodForm(meal) {
 function removeFood(index) {
   const date = todayIso();
   ensureNutritionDay();
+  state.nutritionLogs[date] = foodsForDate(date);
   state.nutritionLogs[date].splice(index, 1);
   saveState();
   renderNutrition();
@@ -1498,9 +1499,11 @@ function saveSettings(formData) {
   ["calorieTarget", "proteinTarget", "carbTarget", "fatTarget", "weeklyIncrease", "maintenanceGoal", "waistGuardrail"].forEach((key) => {
     state.settings[key] = Number(formData.get(key));
   });
+  state.settings = normalizeSettings(state.settings);
   saveState();
   showToast("Settings saved.");
   renderMore();
+  renderHome();
 }
 
 function habitPanel(date) {
@@ -1585,9 +1588,6 @@ function habitWeekTrend() {
 
 function setWeek(week) {
   state.settings.week = week;
-  const start = parseLocalDate(todayIso());
-  start.setDate(start.getDate() - ((week - 1) * 7));
-  state.settings.startDate = toLocalIsoDate(start);
   saveState();
   renderWorkouts();
   renderHome();
@@ -1700,7 +1700,7 @@ function weeklyNutritionTrend() {
   const days = Array.from({ length: 7 }, (_, index) => {
     return isoDaysAgo(index);
   });
-  const daily = days.map((date) => macroTotals(state.nutritionLogs[date] || []));
+  const daily = days.map((date) => macroTotals(foodsForDate(date)));
   const loggedDays = daily.filter((day) => day.calories > 0);
   const divisor = loggedDays.length || 1;
   const avg = loggedDays.reduce((totals, day) => ({
@@ -1715,6 +1715,10 @@ function weeklyNutritionTrend() {
     statCard("Avg Carbs", `${Math.round(avg.carbs / divisor)}g`, "Daily average"),
     statCard("Avg Fat", `${Math.round(avg.fat / divisor)}g`, "Daily average")
   ].join("");
+}
+
+function foodsForDate(date) {
+  return (state.nutritionLogs[date] || []).filter((meal) => !meal.logDate || meal.logDate === date);
 }
 
 function bar(label, current, target, tone) {
@@ -1873,6 +1877,14 @@ function normalizeNutritionState(source = {}) {
   return { nutritionLogs: logs, nutritionDay: today };
 }
 
+function normalizeSettings(settings = {}) {
+  const normalized = { ...defaultState.settings, ...settings };
+  if (!normalized.startDate || normalized.startDate > DEFAULT_PROGRAM_START_DATE) {
+    normalized.startDate = DEFAULT_PROGRAM_START_DATE;
+  }
+  return normalized;
+}
+
 function ensureNutritionDay() {
   const today = todayIso();
   if (state.nutritionDay === today) return;
@@ -1905,7 +1917,7 @@ function loadState() {
       ...saved,
       nutritionLogs: nutrition.nutritionLogs,
       nutritionDay: nutrition.nutritionDay,
-      settings: { ...defaultState.settings, ...(saved.settings || {}) },
+      settings: normalizeSettings(saved.settings),
       exerciseHistory: saved.exerciseHistory || {},
       morningWeights: saved.morningWeights || seedMorningWeights(saved.progressLogs),
       activeWorkout: normalizeActiveWorkout(saved.activeWorkout),
@@ -2016,7 +2028,7 @@ function hydrateState(nextState, currentState = null) {
     ...nextState,
     nutritionLogs: nutrition.nutritionLogs,
     nutritionDay: nutrition.nutritionDay,
-    settings: { ...defaultState.settings, ...(nextState.settings || {}) },
+    settings: normalizeSettings(nextState.settings),
     exerciseHistory: nextState.exerciseHistory || {},
     morningWeights: nextState.morningWeights || seedMorningWeights(nextState.progressLogs),
     activeWorkout: normalizeActiveWorkout(nextState.activeWorkout),
