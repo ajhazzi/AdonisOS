@@ -355,8 +355,6 @@ function renderHome() {
         <small>DAY ${programDay()}</small>
       </div>
       <div class="today-label"><b>${today.short}</b><span>Today's workout</span></div>
-      <div class="measurement-line shoulders"><span class="line-label">Target Shoulders</span><span class="line-value">48.0"</span></div>
-      <div class="measurement-line waist"><span class="line-label">Target Waist</span><span class="line-value">33.0"</span></div>
       <div class="goals-panel">
         <h2>Goals</h2>
         ${goalRow(icons.scale, "Weight", "180-182 lbs")}
