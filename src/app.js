@@ -1,6 +1,7 @@
 const STORAGE_KEY = "adonis_os_state_v1";
 const CLOUD_PIN_KEY = "adonis_os_cloud_pin";
 const DEFAULT_PROGRAM_START_DATE = "2026-07-06";
+const APP_TIME_ZONE = "America/Vancouver";
 
 const icons = {
   menu: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>`,
@@ -928,7 +929,12 @@ async function importShapeScale(formData) {
 
 async function scanFileData(file) {
   if (file.type.startsWith("image/")) return resizeImageFile(file);
-  if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) return fileToDataUrl(file);
+  if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
+    if (file.size > 3_200_000) {
+      throw new Error("That ShapeScale PDF is too large for the app upload. Use a screenshot/photo of the report page, or paste the report text.");
+    }
+    return fileToDataUrl(file);
+  }
   throw new Error("Use a ShapeScale PDF or image file.");
 }
 
@@ -1012,7 +1018,7 @@ function renderNutrition() {
       <p>MacroFactor-inspired control center for reverse dieting while keeping the waist under ${targets.waistGuardrail}".</p>
     </div>
     <div class="section-panel panel">
-      <div class="section-head"><h2>Daily Targets</h2><button class="link-button" data-action="seed-food">Sample Day</button></div>
+      <div class="section-head"><h2>Daily Targets</h2><span class="small">${date} · Vancouver time</span></div>
       <div class="stats-grid">
         ${statCard("Calories", `${totals.calories}/${targets.calorieTarget}`, `${Math.max(0, targets.calorieTarget - totals.calories)} remaining`)}
         ${statCard("Protein", `${totals.protein}/${targets.proteinTarget}g`, `${Math.max(0, targets.proteinTarget - totals.protein)}g remaining`)}
@@ -1128,7 +1134,7 @@ function roundMacro(value) {
 }
 
 function saveMealTemplate(meal) {
-  state.savedMeals = state.savedMeals || [];
+  state.savedMeals = normalizeSavedMeals(state.savedMeals);
   const savedMeal = { ...meal, id: mealId(meal), updatedAt: new Date().toISOString() };
   const existingIndex = state.savedMeals.findIndex((item) => item.id === savedMeal.id);
   if (existingIndex >= 0) {
@@ -1575,9 +1581,8 @@ function habitScore(date) {
 
 function habitWeekTrend() {
   return Array.from({ length: 7 }, (_, index) => {
-    const date = new Date();
-    date.setDate(date.getDate() - index);
-    const iso = toLocalIsoDate(date);
+    const iso = isoDaysAgo(index);
+    const date = parseLocalDate(iso);
     const score = habitScore(iso);
     return `<div class="habit-day"><b>${date.toLocaleDateString(undefined, { weekday: "short" })}</b><div class="habit-ring" style="--score:${score}%">${score}</div><span>${iso.slice(5)}</span></div>`;
   }).reverse().join("");
@@ -1698,9 +1703,7 @@ function historyRow(log) {
 
 function weeklyNutritionTrend() {
   const days = Array.from({ length: 7 }, (_, index) => {
-    const date = new Date();
-    date.setDate(date.getDate() - index);
-    return toLocalIsoDate(date);
+    return isoDaysAgo(index);
   });
   const daily = days.map((date) => macroTotals(state.nutritionLogs[date] || []));
   const loggedDays = daily.filter((day) => day.calories > 0);
@@ -1760,7 +1763,7 @@ function activeExerciseById(workout, active, exerciseId) {
 
 function todayWorkout() {
   const map = { 1: "upper-a", 2: "tuesday", 3: "lower-a", 4: "thursday", 5: "upper-b", 6: "lower-b", 0: "sunday" };
-  return getWorkout(map[new Date().getDay()]);
+  return getWorkout(map[appWeekday()]);
 }
 
 function hasWorkoutOnDate(workoutId, date) {
@@ -1826,6 +1829,28 @@ function seedMorningWeights(progressLogs = defaultState.progressLogs) {
     .map((entry) => ({ date: entry.date, weight: Number(entry.weight), notes: entry.source === "ShapeScale" ? "Seeded from ShapeScale import." : "Seeded from progress history." }));
 }
 
+function normalizeSavedMeals(meals = []) {
+  return (Array.isArray(meals) ? meals : [])
+    .map((meal) => {
+      const clean = cleanMeal(meal);
+      return { ...clean, id: meal.id || mealId(clean), updatedAt: meal.updatedAt || "" };
+    })
+    .filter((meal) => meal.name);
+}
+
+function mergeSavedMeals(localMeals = [], remoteMeals = []) {
+  const merged = new Map();
+  [...normalizeSavedMeals(remoteMeals), ...normalizeSavedMeals(localMeals)].forEach((meal) => {
+    const existing = merged.get(meal.id);
+    if (!existing || String(meal.updatedAt || "") >= String(existing.updatedAt || "")) {
+      merged.set(meal.id, meal);
+    }
+  });
+  return Array.from(merged.values())
+    .sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")))
+    .slice(0, 40);
+}
+
 function normalizeActiveWorkout(active) {
   if (!active) return null;
   return {
@@ -1850,7 +1875,7 @@ function loadState() {
       exerciseHistory: saved.exerciseHistory || {},
       morningWeights: saved.morningWeights || seedMorningWeights(saved.progressLogs),
       activeWorkout: normalizeActiveWorkout(saved.activeWorkout),
-      savedMeals: saved.savedMeals || [],
+      savedMeals: normalizeSavedMeals(saved.savedMeals),
       habitLogs: saved.habitLogs || {},
       coachMessages: saved.coachMessages?.length ? saved.coachMessages : structuredClone(defaultState.coachMessages)
     };
@@ -1893,7 +1918,7 @@ async function pullCloudState(manual = false) {
   try {
     const remote = await apiRequest("/api/state");
     if (remote.state) {
-      state = hydrateState(remote.state);
+      state = hydrateState(remote.state, state);
       saveState({ localOnly: true });
       cloudStatus = `Pulled ${remote.updated_at ? new Date(remote.updated_at).toLocaleString() : "cloud state"}`;
       route(currentScreen);
@@ -1940,12 +1965,17 @@ async function apiRequest(path, options = {}) {
     }
   });
   const text = await response.text();
-  const data = text ? JSON.parse(text) : {};
+  let data = {};
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = { error: text || `${response.status} ${response.statusText}` };
+  }
   if (!response.ok) throw new Error(data.error || `${response.status} ${response.statusText}`);
   return data;
 }
 
-function hydrateState(nextState) {
+function hydrateState(nextState, currentState = null) {
   return {
     ...structuredClone(defaultState),
     ...nextState,
@@ -1953,7 +1983,7 @@ function hydrateState(nextState) {
     exerciseHistory: nextState.exerciseHistory || {},
     morningWeights: nextState.morningWeights || seedMorningWeights(nextState.progressLogs),
     activeWorkout: normalizeActiveWorkout(nextState.activeWorkout),
-    savedMeals: nextState.savedMeals || [],
+    savedMeals: mergeSavedMeals(currentState?.savedMeals || [], nextState.savedMeals || []),
     habitLogs: nextState.habitLogs || {},
     coachMessages: nextState.coachMessages?.length ? nextState.coachMessages : structuredClone(defaultState.coachMessages)
   };
@@ -2011,13 +2041,38 @@ function secondsToClock(total) {
 }
 
 function todayIso() {
-  return toLocalIsoDate(new Date());
+  return toAppIsoDate(new Date());
 }
 
 function entryDaysAgo(days, data) {
-  const date = new Date();
+  const date = parseLocalDate(todayIso());
   date.setDate(date.getDate() - days);
   return { date: toLocalIsoDate(date), ...data };
+}
+
+function isoDaysAgo(days) {
+  const date = parseLocalDate(todayIso());
+  date.setDate(date.getDate() - days);
+  return toLocalIsoDate(date);
+}
+
+function appWeekday() {
+  const weekday = new Intl.DateTimeFormat("en-US", {
+    timeZone: APP_TIME_ZONE,
+    weekday: "short"
+  }).format(new Date());
+  return ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(weekday);
+}
+
+function toAppIsoDate(date) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: APP_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
 }
 
 function toLocalIsoDate(date) {
