@@ -1,6 +1,7 @@
 const STORAGE_KEY = "adonis_os_state_v1";
 const SAVED_MEALS_KEY = "adonis_os_saved_meals_v1";
 const EXERCISE_HISTORY_KEY = "adonis_os_exercise_history_v1";
+const WORKOUT_LOGS_KEY = "adonis_os_workout_logs_v1";
 const CLOUD_PIN_KEY = "adonis_os_cloud_pin";
 const DEFAULT_PROGRAM_START_DATE = "2026-07-06";
 const APP_TIME_ZONE = "America/Vancouver";
@@ -1179,15 +1180,17 @@ function finishWorkout() {
   activeWorkoutExercises(getWorkout(active.workoutId), active).forEach((exercise) => {
     rememberExerciseHistory(active, exercise);
   });
-  state.workoutLogs.unshift({
+  const completedLog = {
     id: active.id,
     workoutId: active.workoutId,
     workoutName: getWorkout(active.workoutId).name,
     date: new Date().toISOString(),
     durationSec: activeWorkoutElapsedSec(active),
     readinessApplied: active.readinessApplied || null,
-    sets: active.sets
-  });
+    sets: active.sets.map((set) => ({ ...set }))
+  };
+  state.workoutLogs = normalizeWorkoutLogs([completedLog, ...(state.workoutLogs || [])]);
+  persistWorkoutLogs();
   state.activeWorkout = null;
   saveState();
   stopActiveTick();
@@ -2044,6 +2047,7 @@ function resetData() {
   localStorage.removeItem(STORAGE_KEY);
   localStorage.removeItem(SAVED_MEALS_KEY);
   localStorage.removeItem(EXERCISE_HISTORY_KEY);
+  localStorage.removeItem(WORKOUT_LOGS_KEY);
   state = structuredClone(defaultState);
   saveState();
   route("home");
@@ -2255,8 +2259,10 @@ function exerciseHistoryKey(workoutId, exerciseId) {
 
 function lastExerciseSets(workoutId, exerciseId, options = {}) {
   const history = state.exerciseHistory?.[exerciseHistoryKey(workoutId, exerciseId)];
-  if (history?.sets?.length && history.sessionId !== options.excludeSessionId) return history.sets;
-  const log = state.workoutLogs.find((item) => item.id !== options.excludeSessionId && item.workoutId === workoutId && item.sets.some((set) => set.exerciseId === exerciseId));
+  if (history?.sets?.length && history.sessionId !== options.excludeSessionId) return history.sets.map((set) => ({ ...set }));
+  const log = [...(state.workoutLogs || [])]
+    .filter((item) => item.id !== options.excludeSessionId && item.workoutId === workoutId && item.sets.some((set) => set.exerciseId === exerciseId))
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)))[0];
   return log ? log.sets.filter((set) => set.exerciseId === exerciseId) : null;
 }
 
@@ -2314,11 +2320,12 @@ function previousProgressWithMetric(metric, afterDate = "") {
 
 function latestMorningWeight() {
   const latest = latestProgress();
-  return (state.morningWeights || [])[0] || { date: latest.date || todayIso(), weight: latest.weight, notes: "" };
+  return (state.morningWeights || []).find((entry) => hasPositiveNumber(entry?.weight)) || { date: latest.date || todayIso(), weight: latest.weight, notes: "" };
 }
 
 function previousMorningWeight() {
-  return (state.morningWeights || [])[1] || null;
+  const latest = latestMorningWeight();
+  return (state.morningWeights || []).find((entry) => entry.date !== latest.date && hasPositiveNumber(entry?.weight)) || null;
 }
 
 function sevenDayAverage() {
@@ -2342,11 +2349,15 @@ function adonisScore(entry) {
 }
 
 function changeText(current, previous, suffix, lowerIsGood = false) {
-  if (previous === undefined || previous === null) return "First entry";
+  if (!hasPositiveNumber(current) || !hasPositiveNumber(previous)) return "First entry";
   const diff = Number(current) - Number(previous);
   const good = lowerIsGood ? diff <= 0 : diff >= 0;
   const sign = diff > 0 ? "+" : "";
   return `<span style="color:${good ? "var(--green)" : "var(--danger)"}">${sign}${diff.toFixed(1)}${suffix}</span> vs previous`;
+}
+
+function hasPositiveNumber(value) {
+  return value !== "" && value !== null && value !== undefined && Number.isFinite(Number(value)) && Number(value) > 0;
 }
 
 function macroTotals(foods) {
@@ -2449,6 +2460,29 @@ function normalizeWorkoutLogs(logs = []) {
     }))
     .filter((log) => log.id && log.workoutId && log.date && log.sets.length)
     .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+}
+
+function mergeWorkoutLogs(localLogs = [], remoteLogs = []) {
+  const merged = new Map();
+  [...normalizeWorkoutLogs(remoteLogs), ...normalizeWorkoutLogs(localLogs)].forEach((log) => {
+    const existing = merged.get(log.id);
+    if (!existing || log.sets.length >= existing.sets.length || String(log.date || "") >= String(existing.date || "")) {
+      merged.set(log.id, log);
+    }
+  });
+  return Array.from(merged.values()).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+}
+
+function persistWorkoutLogs() {
+  localStorage.setItem(WORKOUT_LOGS_KEY, JSON.stringify(normalizeWorkoutLogs(state.workoutLogs)));
+}
+
+function loadPersistedWorkoutLogs() {
+  try {
+    return normalizeWorkoutLogs(JSON.parse(localStorage.getItem(WORKOUT_LOGS_KEY)) || []);
+  } catch {
+    return [];
+  }
 }
 
 function normalizeSavedMeals(meals = []) {
@@ -2608,7 +2642,7 @@ function loadState() {
     const progressLogs = normalizeProgressLogs(saved.progressLogs);
     const savedMeals = mergeSavedMeals(loadPersistedSavedMeals(), saved.savedMeals || []);
     const exerciseHistory = mergeExerciseHistory(loadPersistedExerciseHistory(), saved.exerciseHistory || {});
-    const workoutLogs = normalizeWorkoutLogs(saved.workoutLogs);
+    const workoutLogs = mergeWorkoutLogs(loadPersistedWorkoutLogs(), saved.workoutLogs || []);
     return {
       ...structuredClone(defaultState),
       ...saved,
@@ -2633,6 +2667,7 @@ function loadState() {
 function saveState(options = {}) {
   persistSavedMeals();
   persistExerciseHistory();
+  persistWorkoutLogs();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   if (!options.localOnly) queueCloudSave();
 }
@@ -2726,7 +2761,10 @@ async function apiRequest(path, options = {}) {
 function hydrateState(nextState, currentState = null) {
   const nutrition = normalizeNutritionState(nextState);
   const progressLogs = normalizeProgressLogs(nextState.progressLogs);
-  const workoutLogs = normalizeWorkoutLogs(nextState.workoutLogs);
+  const workoutLogs = mergeWorkoutLogs(
+    loadPersistedWorkoutLogs(),
+    mergeWorkoutLogs(currentState?.workoutLogs || [], nextState.workoutLogs || [])
+  );
   const savedMeals = mergeSavedMeals(
     loadPersistedSavedMeals(),
     mergeSavedMeals(currentState?.savedMeals || [], nextState.savedMeals || [])
