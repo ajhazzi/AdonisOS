@@ -603,7 +603,7 @@ function whoopReadinessBody() {
       ${statCard("RHR", `${readiness.resting_heart_rate ?? "--"}`, "Resting bpm")}
       ${statCard("Strain", `${readiness.cycle_strain ?? "--"}`, "Current cycle")}
       ${statCard("Steps", readiness.steps ? `${Math.round(readiness.steps).toLocaleString()}` : "--", "WHOOP daily")}
-      ${statCard("Burn", readiness.calories_burned ? `${readiness.calories_burned} kcal` : "--", "WHOOP cycle")}
+      ${statCard("Burn", readiness.calories_burned ? `${readiness.calories_burned} kcal` : readiness.workout_calories ? `${readiness.workout_calories} kcal` : "--", readiness.calories_burned ? "WHOOP cycle" : readiness.workout_calories ? "Workout burn" : "WHOOP")}
     </div>
     <div class="button-row">
       <button class="button secondary" data-route="more">Import WHOOP</button>
@@ -658,6 +658,7 @@ async function importWhoopData(formData) {
   showToast("Importing WHOOP data...");
   try {
     let readiness = null;
+    let importedHistory = [];
     if (file?.size && file.type.startsWith("image/")) {
       if (!getCloudPin()) throw new Error("Save your app PIN first for screenshot import.");
       const image = await resizeImageFile(file);
@@ -666,13 +667,23 @@ async function importWhoopData(formData) {
         body: JSON.stringify({ image })
       });
       readiness = data.readiness;
+      importedHistory = data.history || [];
+    } else if (file?.size && isZipFile(file)) {
+      if (!getCloudPin()) throw new Error("Save your app PIN first for WHOOP zip import.");
+      const fileData = await fileToDataUrl(file);
+      const data = await apiRequest("/api/whoop/import", {
+        method: "POST",
+        body: JSON.stringify({ fileData, filename: file.name })
+      });
+      readiness = data.readiness;
+      importedHistory = data.history || [];
     } else {
       const text = pasted || (file?.size ? await fileToText(file) : "");
       if (!text.trim()) throw new Error("Choose a WHOOP CSV/screenshot or paste WHOOP stats.");
       readiness = parseWhoopText(text);
     }
 
-    saveWhoopReadiness(readiness);
+    saveWhoopReadiness(readiness, importedHistory);
     route(currentScreen);
     showToast("WHOOP data imported.");
   } catch (error) {
@@ -683,18 +694,32 @@ async function importWhoopData(formData) {
   }
 }
 
-function saveWhoopReadiness(readiness) {
+function saveWhoopReadiness(readiness, history = []) {
   const clean = normalizeManualWhoopReadiness(readiness);
+  const importedHistory = (history || []).map((row) => normalizeManualWhoopReadiness(row));
   state.whoop = {
     ...normalizeWhoop(state.whoop),
     connected: false,
     readiness: clean,
-    history: [clean, ...(state.whoop?.history || []).filter((row) => row.date !== clean.date)].slice(0, 30),
+    history: mergeWhoopHistory([clean, ...importedHistory], state.whoop?.history || []),
     lastSync: new Date().toISOString(),
     status: "WHOOP imported",
     error: ""
   };
   saveState();
+}
+
+function mergeWhoopHistory(newRows = [], existingRows = []) {
+  const rows = new Map();
+  [...existingRows, ...newRows].forEach((row) => {
+    if (!row?.date) return;
+    rows.set(row.date, row);
+  });
+  return Array.from(rows.values()).sort((a, b) => String(b.date).localeCompare(String(a.date))).slice(0, 60);
+}
+
+function isZipFile(file) {
+  return file?.type === "application/zip" || file?.type === "application/x-zip-compressed" || String(file?.name || "").toLowerCase().endsWith(".zip");
 }
 
 function parseWhoopText(text) {
@@ -751,7 +776,8 @@ function normalizeManualWhoopReadiness(input = {}) {
     calories_burned: numberFromAny(input.calories_burned),
     workout_calories: numberFromAny(input.workout_calories),
     steps: numberFromAny(input.steps),
-    source: "manual-whoop",
+    workouts: Array.isArray(input.workouts) ? input.workouts : [],
+    source: input.source || "manual-whoop",
     last_synced_at: new Date().toISOString(),
     rules_version: "adonis-readiness-v1",
     ...recommendation
@@ -1833,7 +1859,8 @@ function coachContext() {
   const readiness = state.whoop?.readiness || null;
   const energy = dailyEnergyLedger(totals);
   const energyLine = energy.balance === null ? "Energy balance is unavailable until WHOOP burn syncs." : `Energy balance today is ${energy.balanceText}: ${energy.caloriesIn} in vs ${energy.caloriesOut} out.`;
-  const whoopLine = readiness ? `WHOOP says ${readiness.readiness_level}: ${readiness.recovery_score ?? "--"}% recovery, ${readiness.sleep_performance_percentage ?? "--"}% sleep, ${readiness.steps ? Math.round(readiness.steps).toLocaleString() : "--"} steps, ${readiness.calories_burned ?? "--"} kcal burned, ${readiness.recommended_action}. ${energyLine}` : "WHOOP is not connected yet.";
+  const burnText = readiness?.calories_burned ?? readiness?.workout_calories ?? "--";
+  const whoopLine = readiness ? `WHOOP says ${readiness.readiness_level}: ${readiness.recovery_score ?? "--"}% recovery, ${readiness.sleep_performance_percentage ?? "--"}% sleep, ${readiness.steps ? Math.round(readiness.steps).toLocaleString() : "--"} steps, ${burnText} kcal burned, ${readiness.recommended_action}. ${energyLine}` : "WHOOP is not connected yet.";
   const primaryInsight = `Current data says ${fmt(latest.weight)} lb, ${fmt(latest.waist)}\" waist, ${fmt(latest.shoulders)}\" shoulders, ${fmt(latest.bodyFat)}% body fat. ${whoopLine} Goal is 180-182 lb with a 33\" waist and 48\"+ shoulders, so we build, but we do not bulk like a man with no mirror.`;
   return { latest, previous, totals, habitScore: habitToday, recentWorkouts, waistDelta, bodyFatDelta, calorieRemaining, waistLine, bodyFatLine, trainingLine, habitLine, nutritionLine, biggestRisk, primaryInsight, whoop: state.whoop || {}, whoopLine, energy };
 }
@@ -1914,7 +1941,7 @@ function whoopIntegrationPanel() {
       <div>
         <strong>WHOOP</strong>
         <span>${connectedText}${whoop.lastSync ? ` · Last sync ${new Date(whoop.lastSync).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : ""}</span>
-        <p class="small">${readiness ? `${readiness.recommended_action}: ${readiness.recovery_score ?? "--"}% recovery, ${readiness.sleep_performance_percentage ?? "--"}% sleep, ${readiness.calories_burned ?? "--"} kcal burned.` : "Import a WHOOP CSV/text export or a screenshot. No WHOOP developer API credentials required."}</p>
+        <p class="small">${readiness ? `${readiness.recommended_action}: ${readiness.recovery_score ?? "--"}% recovery, ${readiness.sleep_performance_percentage ?? "--"}% sleep, ${readiness.calories_burned ?? readiness.workout_calories ?? "--"} kcal burned.` : "Import a WHOOP zip export, CSV/text export, or screenshot. No WHOOP developer API credentials required."}</p>
       </div>
       <div class="pills">
         <span class="pill">Recovery</span>
@@ -1925,9 +1952,9 @@ function whoopIntegrationPanel() {
     </div>
     <form id="whoop-import-form" class="label-scan-form">
       <label class="file-drop">
-        <span>Import WHOOP CSV or Screenshot</span>
-        <small>Choose a CSV/text export, or a screenshot showing recovery, sleep, strain, calories, and steps.</small>
-        <input name="whoopFile" type="file" accept=".csv,.txt,text/csv,text/plain,image/*">
+        <span>Import WHOOP Zip, CSV, or Screenshot</span>
+        <small>Use the full WHOOP export zip, a CSV/text export, or a screenshot showing recovery, sleep, strain, and calories.</small>
+        <input name="whoopFile" type="file" accept=".zip,application/zip,.csv,.txt,text/csv,text/plain,image/*">
       </label>
       <div class="field"><label>Paste WHOOP Text</label><textarea name="whoopText" placeholder="Paste visible WHOOP stats here if you do not have a file."></textarea></div>
       <button class="button primary" type="submit">Import WHOOP Data</button>
