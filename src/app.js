@@ -2372,10 +2372,13 @@ function realMorningWeightSeed() {
 
 function normalizeProgressLogs(logs = []) {
   const fakeNotes = ["Baseline check.", "On track. Waist moving right."];
+  const fakeDates = ["2026-06-30", "2026-07-07"];
   const cleaned = (Array.isArray(logs) ? logs : [])
     .filter((entry) => entry?.date)
+    .filter((entry) => !fakeDates.includes(entry.date))
     .filter((entry) => !fakeNotes.includes(String(entry.notes || "")))
-    .filter((entry) => !(entry.source === "Manual" && Number(entry.bodyFat) < 13 && Number(entry.weight) >= 180))
+    .filter((entry) => !(Number(entry.bodyFat) > 0 && Number(entry.bodyFat) < 13.6))
+    .filter((entry) => !(entry.source === "Manual" && entry.date >= "2026-07-01" && [180, 181.2].includes(Number(entry.weight))))
     .map((entry) => ({ ...entry }));
 
   realProgressSeed().forEach((realEntry) => {
@@ -2395,10 +2398,13 @@ function seedMorningWeights(progressLogs = defaultState.progressLogs) {
 
 function normalizeMorningWeights(weights = [], progressLogs = defaultState.progressLogs) {
   const fakeNotes = ["Baseline morning weight.", "Morning weigh-in."];
+  const fakeDates = ["2026-06-30", "2026-07-07"];
   const cleaned = (Array.isArray(weights) ? weights : [])
     .filter((entry) => entry?.date)
+    .filter((entry) => !fakeDates.includes(entry.date))
     .filter((entry) => !fakeNotes.includes(String(entry.notes || "")))
     .filter((entry) => !(Number(entry.weight) >= 180 && Number(entry.weight) <= 182 && String(entry.notes || "").includes("Morning")))
+    .filter((entry) => !(entry.date >= "2026-07-01" && [180, 181.2].includes(Number(entry.weight))))
     .map((entry) => ({ ...entry, weight: Number(entry.weight || 0) }));
 
   realMorningWeightSeed().forEach((realEntry) => {
