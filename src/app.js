@@ -315,14 +315,17 @@ function route(screen) {
 function renderHome() {
   const screen = byId("screen-home");
   const latest = latestProgress();
-  const previous = previousProgress();
+  const latestWaist = latestProgressWithMetric("waist");
+  const previousWaist = previousProgressWithMetric("waist", latestWaist?.date);
   const currentWeight = latestMorningWeight();
   const previousWeight = previousMorningWeight();
   const today = todayWorkout();
   const week = programWeek();
   const completedToday = hasWorkoutOnDate(today.id, todayIso());
-  const ratio = ratioText(latest);
-  const score = adonisScore(latest);
+  const ratioEntry = latestProgressWithMetrics(["waist", "shoulders"]);
+  const scoreEntry = latestProgressWithMetrics(["waist", "shoulders", "bodyFat"]);
+  const ratio = ratioText(ratioEntry || latest);
+  const score = adonisScore(scoreEntry || latest);
   const habitScoreToday = habitScore(todayIso());
 
   screen.innerHTML = `
@@ -390,7 +393,7 @@ function renderHome() {
       </div>
       <div class="stats-grid">
         ${statCard("Weight", `${fmt(currentWeight.weight)} lbs`, changeText(currentWeight.weight, previousWeight?.weight, "lb"))}
-        ${statCard("Waist", `${fmt(latest.waist)}"`, changeText(latest.waist, previous?.waist, "\"", true))}
+        ${statCard("Waist", `${fmt(latestWaist?.waist)}"`, changeText(latestWaist?.waist, previousWaist?.waist, "\"", true))}
         ${statCard("Ratio", ratio, ratio === "--" ? "Needs shoulders" : "Shoulder-to-waist")}
         ${statCard("Adonis Score", score === "--" ? "--" : `${score}%`, score === "--" ? "Needs shoulders" : score >= 80 ? "On Track" : "Build Phase")}
       </div>
@@ -1201,7 +1204,10 @@ function cancelWorkout() {
 
 function renderProgress() {
   const latest = latestProgress();
-  const prev = previousProgress();
+  const latestWaist = latestProgressWithMetric("waist");
+  const previousWaist = previousProgressWithMetric("waist", latestWaist?.date);
+  const ratioEntry = latestProgressWithMetrics(["waist", "shoulders"]);
+  const scoreEntry = latestProgressWithMetrics(["waist", "shoulders", "bodyFat"]);
   const morningWeight = latestMorningWeight();
   const avg = sevenDayAverage();
   byId("screen-progress").innerHTML = `
@@ -1211,9 +1217,9 @@ function renderProgress() {
     </div>
     <div class="stats-grid">
       ${statCard("Morning Weight", `${fmt(morningWeight.weight)} lbs`, avg ? `7-day avg ${fmt(avg)} lbs` : "Need 7 days")}
-      ${statCard("Current Waist", `${fmt(latest.waist)}"`, changeText(latest.waist, prev?.waist, "\"", true))}
-      ${statCard("Shoulder Ratio", ratioText(latest), "Target 1.45+")}
-      ${statCard("Adonis Score", `${adonisScore(latest)}%`, "Composite physique signal")}
+      ${statCard("Current Waist", `${fmt(latestWaist?.waist)}"`, changeText(latestWaist?.waist, previousWaist?.waist, "\"", true))}
+      ${statCard("Shoulder Ratio", ratioText(ratioEntry || latest), "Target 1.45+")}
+      ${statCard("Adonis Score", adonisScore(scoreEntry || latest) === "--" ? "--" : `${adonisScore(scoreEntry || latest)}%`, "Composite physique signal")}
     </div>
     <div class="section-panel panel">
       <div class="section-head"><h2>ShapeScale Import</h2><span class="small">Weekly source of truth</span></div>
@@ -1980,7 +1986,7 @@ function habitPanel(date) {
           `;
         }).join("")}
       </div>
-      <button class="button secondary habit-save" type="submit">Save Daily Habits</button>
+      <button class="button secondary habit-save" type="submit">Save Supplements</button>
     </form>
   `;
 }
@@ -2286,6 +2292,24 @@ function latestProgress() {
 
 function previousProgress() {
   return state.progressLogs[1] || null;
+}
+
+function hasMetric(entry, metric) {
+  return entry && entry[metric] !== "" && entry[metric] !== null && entry[metric] !== undefined && Number(entry[metric]) !== 0 && Number.isFinite(Number(entry[metric]));
+}
+
+function latestProgressWithMetric(metric) {
+  return (state.progressLogs || []).find((entry) => hasMetric(entry, metric)) || null;
+}
+
+function latestProgressWithMetrics(metrics = []) {
+  return (state.progressLogs || []).find((entry) => metrics.every((metric) => hasMetric(entry, metric))) || null;
+}
+
+function previousProgressWithMetric(metric, afterDate = "") {
+  const entries = (state.progressLogs || []).filter((entry) => hasMetric(entry, metric));
+  if (!afterDate) return entries[1] || null;
+  return entries.find((entry) => entry.date < afterDate) || null;
 }
 
 function latestMorningWeight() {
