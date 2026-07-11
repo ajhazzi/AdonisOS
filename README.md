@@ -71,13 +71,6 @@ ADONIS_APP_PIN=choose-a-private-pin
 ADONIS_USER_ID=aj-hazzi
 
 APP_BASE_URL=https://adonis-os.vercel.app
-TOKEN_ENCRYPTION_KEY=make-this-a-long-private-random-secret
-
-WHOOP_CLIENT_ID=your-whoop-client-id
-WHOOP_CLIENT_SECRET=your-whoop-client-secret
-WHOOP_REDIRECT_URI=https://adonis-os.vercel.app/api/whoop/callback
-WHOOP_WEBHOOK_SECRET=optional-webhook-secret
-WHOOP_DEMO_MODE=false
 ```
 
 ### 3. Use The App PIN
@@ -93,12 +86,12 @@ From then on:
 
 ## WHOOP Setup
 
-Create a WHOOP Developer app and set its callback/redirect URL to:
+Adonis OS uses manual WHOOP import. No WHOOP developer client ID or secret is required.
 
-```text
-https://adonis-os.vercel.app/api/whoop/callback
-```
+Open **More -> Integrations**, then import one of:
 
-Then add the WHOOP variables above in Vercel, redeploy, open **More -> Cloud Sync** to save your app PIN, then open **More -> Integrations -> Connect WHOOP**.
+- A WHOOP CSV/text export
+- Pasted WHOOP text
+- A WHOOP screenshot, using the existing OpenAI key for image reading
 
-WHOOP data is stored in Supabase as raw cycles, recoveries, sleeps, workouts, and a daily Adonis readiness row. The app uses that readiness to show Home recovery status and optional workout volume adjustments.
+Imported WHOOP data powers the Home readiness card, workout volume guidance, and Nutrition energy balance.

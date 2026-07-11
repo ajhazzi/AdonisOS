@@ -1,4 +1,6 @@
 const STORAGE_KEY = "adonis_os_state_v1";
+const SAVED_MEALS_KEY = "adonis_os_saved_meals_v1";
+const EXERCISE_HISTORY_KEY = "adonis_os_exercise_history_v1";
 const CLOUD_PIN_KEY = "adonis_os_cloud_pin";
 const DEFAULT_PROGRAM_START_DATE = "2026-07-06";
 const APP_TIME_ZONE = "America/Vancouver";
@@ -178,18 +180,7 @@ function init() {
   route(state.activeWorkout ? "active" : "home");
   startDateRolloverWatch();
   registerServiceWorker();
-  handleWhoopReturn();
   if (getCloudPin()) pullCloudState(false);
-  if (getCloudPin()) loadWhoopLatest(false);
-}
-
-function handleWhoopReturn() {
-  const params = new URLSearchParams(window.location.search);
-  const result = params.get("whoop");
-  if (!result) return;
-  if (result === "connected") showToast("WHOOP connected. Pulling readiness.");
-  if (result === "error") showToast(params.get("message") || "WHOOP connection failed.");
-  window.history.replaceState({}, document.title, window.location.pathname);
 }
 
 function renderShell() {
@@ -271,9 +262,8 @@ function handleClick(event) {
   if (action === "clear-coach") clearCoach();
   if (action === "cloud-pull") pullCloudState(true);
   if (action === "cloud-push") pushCloudState(true);
-  if (action === "whoop-connect") connectWhoop();
-  if (action === "whoop-sync") syncWhoop(Number(actionButton.dataset.days || 14));
-  if (action === "whoop-refresh") loadWhoopLatest(true);
+  if (action === "whoop-sync") route("more");
+  if (action === "whoop-refresh") route("more");
   if (action === "whoop-disconnect") disconnectWhoop(false);
   if (action === "whoop-delete") disconnectWhoop(true);
   if (action === "apply-readiness") applyReadinessToWorkout();
@@ -295,6 +285,7 @@ function handleSubmit(event) {
   if (form.id === "meal-label-form") scanMealLabel(new FormData(form));
   if (form.id === "settings-form") saveSettings(new FormData(form));
   if (form.id === "cloud-form") saveCloudSettings(new FormData(form));
+  if (form.id === "whoop-import-form") importWhoopData(new FormData(form));
   if (form.id === "habit-form") saveHabitNumbers(new FormData(form));
   if (form.id === "coach-form") sendCoachMessage(new FormData(form));
 }
@@ -552,9 +543,9 @@ function renderRecovery() {
       </div>
     </div>
     <div class="section-panel panel">
-      <div class="section-head"><h2>Recent Trend</h2><button class="link-button" data-action="whoop-sync" data-days="30">Sync 30d</button></div>
+      <div class="section-head"><h2>Recent Trend</h2><button class="link-button" data-route="more">Import WHOOP</button></div>
       <div class="whoop-history">
-        ${(state.whoop?.history || []).slice(0, 7).map(whoopHistoryRow).join("") || `<div class="empty">No WHOOP trend yet. Sync after connecting.</div>`}
+        ${(state.whoop?.history || []).slice(0, 7).map(whoopHistoryRow).join("") || `<div class="empty">No WHOOP trend yet. Import a CSV/text export or screenshot.</div>`}
       </div>
     </div>
   `;
@@ -579,12 +570,12 @@ function whoopReadinessBody() {
     return `
       <div class="whoop-empty">
         <div>
-          <b>WHOOP not feeding the machine yet.</b>
-          <span>Connect it once, then Adonis OS will pull recovery, sleep, strain, and workout data into your daily plan.</span>
+          <b>WHOOP data not imported yet.</b>
+          <span>Import a CSV/text export or screenshot from WHOOP, and Adonis OS will use it for readiness and energy balance.</span>
         </div>
         <div class="button-row">
-          <button class="button primary" data-action="whoop-connect">Connect WHOOP</button>
-          <button class="button secondary" data-action="whoop-sync">Sync</button>
+          <button class="button primary" data-route="more">Import WHOOP</button>
+          <button class="button secondary" data-route="recovery">Recovery Details</button>
         </div>
       </div>
     `;
@@ -610,7 +601,7 @@ function whoopReadinessBody() {
       ${statCard("Burn", readiness.calories_burned ? `${readiness.calories_burned} kcal` : "--", "WHOOP cycle")}
     </div>
     <div class="button-row">
-      <button class="button secondary" data-action="whoop-sync">Sync WHOOP</button>
+      <button class="button secondary" data-route="more">Import WHOOP</button>
       <button class="button primary" data-route="recovery">Why This?</button>
     </div>
   `;
@@ -644,89 +635,193 @@ function whoopHistoryRow(row) {
   return `<div class="history-row"><strong>${row.date}</strong><div class="meta">${row.recovery_score ?? "--"}% recovery · ${row.sleep_performance_percentage ?? "--"}% sleep · ${row.recommended_action || "pending"}</div></div>`;
 }
 
-async function connectWhoop() {
-  const pin = getCloudPin();
-  if (!pin) {
-    showToast("Save your app PIN in More first.");
-    route("more");
-    return;
-  }
-  window.location.href = `/api/whoop/connect?pin=${encodeURIComponent(pin)}`;
-}
-
-async function loadWhoopLatest(manual = false) {
-  if (!getCloudPin()) return;
-  try {
-    const data = await apiRequest("/api/whoop/latest");
-    setWhoopState(data);
-    if (manual) showToast("WHOOP readiness refreshed.");
-    if (currentScreen === "home" || currentScreen === "more" || currentScreen === "recovery" || currentScreen === "active") route(currentScreen);
-  } catch (error) {
-    state.whoop = { ...normalizeWhoop(state.whoop), error: error.message, status: error.message || "WHOOP unavailable" };
-    if (manual) showToast(state.whoop.status);
-  }
-}
-
-async function syncWhoop(days = 14) {
-  if (!getCloudPin()) {
-    showToast("Save your app PIN in More first.");
-    route("more");
-    return;
-  }
-  showToast("Syncing WHOOP...");
-  try {
-    const data = await apiRequest("/api/whoop/sync", {
-      method: "POST",
-      body: JSON.stringify({ days })
-    });
-    state.whoop = {
-      ...normalizeWhoop(state.whoop),
-      connected: true,
-      demo: Boolean(data.readiness?.demo),
-      readiness: data.readiness || null,
-      lastSync: new Date().toISOString(),
-      status: data.readiness?.demo ? "Demo WHOOP synced" : "WHOOP synced",
-      error: ""
-    };
-    await loadWhoopHistory(days);
-    saveState();
-    route(currentScreen);
-    showToast(state.whoop.status);
-  } catch (error) {
-    state.whoop = { ...normalizeWhoop(state.whoop), error: error.message, status: error.message || "WHOOP sync failed" };
-    saveState();
-    if (currentScreen === "more" || currentScreen === "recovery") route(currentScreen);
-    showToast(state.whoop.status);
-  }
-}
-
-async function loadWhoopHistory(days = 30) {
-  try {
-    const data = await apiRequest(`/api/whoop/history?days=${encodeURIComponent(days)}`);
-    state.whoop = { ...normalizeWhoop(state.whoop), history: data.records || [] };
-  } catch {
-    state.whoop = normalizeWhoop(state.whoop);
-  }
-}
-
 async function disconnectWhoop(deleteData = false) {
-  if (!getCloudPin()) {
-    showToast("Save your app PIN first.");
-    return;
-  }
-  if (deleteData && !confirm("Disconnect WHOOP and delete stored WHOOP data?")) return;
+  if (deleteData && !confirm("Clear stored WHOOP data?")) return;
   try {
-    await apiRequest("/api/whoop/disconnect", {
-      method: "POST",
-      body: JSON.stringify({ deleteData })
-    });
-    state.whoop = normalizeWhoop({ status: deleteData ? "WHOOP data deleted" : "WHOOP disconnected" });
+    state.whoop = normalizeWhoop({ status: "WHOOP import cleared" });
     saveState();
     route(currentScreen);
     showToast(state.whoop.status);
   } catch (error) {
-    showToast(error.message || "WHOOP disconnect failed");
+    showToast(error.message || "WHOOP clear failed");
   }
+}
+
+async function importWhoopData(formData) {
+  const file = formData.get("whoopFile");
+  const pasted = String(formData.get("whoopText") || "").trim();
+  showToast("Importing WHOOP data...");
+  try {
+    let readiness = null;
+    if (file?.size && file.type.startsWith("image/")) {
+      if (!getCloudPin()) throw new Error("Save your app PIN first for screenshot import.");
+      const image = await resizeImageFile(file);
+      const data = await apiRequest("/api/whoop/import", {
+        method: "POST",
+        body: JSON.stringify({ image })
+      });
+      readiness = data.readiness;
+    } else {
+      const text = pasted || (file?.size ? await fileToText(file) : "");
+      if (!text.trim()) throw new Error("Choose a WHOOP CSV/screenshot or paste WHOOP stats.");
+      readiness = parseWhoopText(text);
+    }
+
+    saveWhoopReadiness(readiness);
+    route(currentScreen);
+    showToast("WHOOP data imported.");
+  } catch (error) {
+    state.whoop = { ...normalizeWhoop(state.whoop), error: error.message || "WHOOP import failed", status: "WHOOP import failed" };
+    saveState();
+    if (currentScreen === "more") renderMore();
+    showToast(state.whoop.error);
+  }
+}
+
+function saveWhoopReadiness(readiness) {
+  const clean = normalizeManualWhoopReadiness(readiness);
+  state.whoop = {
+    ...normalizeWhoop(state.whoop),
+    connected: false,
+    readiness: clean,
+    history: [clean, ...(state.whoop?.history || []).filter((row) => row.date !== clean.date)].slice(0, 30),
+    lastSync: new Date().toISOString(),
+    status: "WHOOP imported",
+    error: ""
+  };
+  saveState();
+}
+
+function parseWhoopText(text) {
+  const rows = csvRows(text);
+  if (rows.length >= 2) {
+    const headers = rows[0].map((value) => value.toLowerCase().trim());
+    const latest = rows.slice(1).filter((row) => row.some(Boolean)).at(-1);
+    if (latest) {
+      const byHeader = (aliases) => {
+        const index = headers.findIndex((header) => aliases.some((alias) => header.includes(alias)));
+        return index >= 0 ? latest[index] : "";
+      };
+      return normalizeManualWhoopReadiness({
+        date: byHeader(["date", "day"]) || todayIso(),
+        recovery_score: byHeader(["recovery"]),
+        sleep_performance_percentage: byHeader(["sleep performance", "sleep score", "sleep"]),
+        sleep_duration_hours: byHeader(["sleep duration", "hours asleep", "time asleep"]),
+        hrv_rmssd: byHeader(["hrv"]),
+        resting_heart_rate: byHeader(["resting heart", "rhr"]),
+        cycle_strain: byHeader(["strain"]),
+        calories_burned: byHeader(["calories burned", "calories", "kcal", "energy"]),
+        workout_calories: byHeader(["workout calories", "activity calories"]),
+        steps: byHeader(["steps"])
+      });
+    }
+  }
+
+  return normalizeManualWhoopReadiness({
+    date: text.match(/\b(20\d{2}-\d{2}-\d{2})\b/)?.[1] || todayIso(),
+    recovery_score: metricFromText(text, ["recovery"]),
+    sleep_performance_percentage: metricFromText(text, ["sleep performance", "sleep score", "sleep"]),
+    sleep_duration_hours: metricFromText(text, ["sleep duration", "hours asleep", "time asleep"]),
+    hrv_rmssd: metricFromText(text, ["hrv"]),
+    resting_heart_rate: metricFromText(text, ["resting heart rate", "rhr"]),
+    cycle_strain: metricFromText(text, ["strain"]),
+    calories_burned: metricFromText(text, ["calories burned", "calories", "kcal"]),
+    workout_calories: metricFromText(text, ["workout calories", "activity calories"]),
+    steps: metricFromText(text, ["steps"])
+  });
+}
+
+function normalizeManualWhoopReadiness(input = {}) {
+  const recoveryScore = numberFromAny(input.recovery_score);
+  const sleepPerformance = numberFromAny(input.sleep_performance_percentage);
+  const recommendation = manualReadinessRecommendation(recoveryScore, sleepPerformance);
+  const readiness = {
+    date: isoDateFromAny(input.date) || todayIso(),
+    recovery_score: recoveryScore,
+    sleep_performance_percentage: sleepPerformance,
+    sleep_duration_hours: numberFromAny(input.sleep_duration_hours),
+    hrv_rmssd: numberFromAny(input.hrv_rmssd),
+    resting_heart_rate: numberFromAny(input.resting_heart_rate),
+    cycle_strain: numberFromAny(input.cycle_strain),
+    calories_burned: numberFromAny(input.calories_burned),
+    workout_calories: numberFromAny(input.workout_calories),
+    steps: numberFromAny(input.steps),
+    source: "manual-whoop",
+    last_synced_at: new Date().toISOString(),
+    rules_version: "adonis-readiness-v1",
+    ...recommendation
+  };
+  if (![readiness.recovery_score, readiness.sleep_performance_percentage, readiness.calories_burned, readiness.steps, readiness.cycle_strain].some((value) => value !== null)) {
+    throw new Error("Could not find WHOOP stats. Try a clearer CSV, screenshot, or paste recovery/sleep/calories/steps text.");
+  }
+  return readiness;
+}
+
+function manualReadinessRecommendation(recoveryScore, sleepPerformance) {
+  const missing = recoveryScore === null && sleepPerformance === null;
+  if (missing) return { readiness_level: "pending", recommended_action: "WHOOP stats imported", recommended_rir: "Use normal plan if you feel good", volume_multiplier: 1, finisher_enabled: false, recommendation_reason: "Imported WHOOP data did not include recovery or sleep score." };
+  const red = recoveryScore !== null && recoveryScore <= 33 || sleepPerformance !== null && sleepPerformance < 60;
+  const yellow = recoveryScore !== null && recoveryScore <= 66 || sleepPerformance !== null && sleepPerformance < 75;
+  if (red) return { readiness_level: "red", recommended_action: "Recovery-biased day", recommended_rir: "3+ RIR", volume_multiplier: 0.6, finisher_enabled: false, recommendation_reason: "Low imported recovery or poor sleep. Keep training conservative." };
+  if (yellow) return { readiness_level: "yellow", recommended_action: "Reduced volume", recommended_rir: "2-3 RIR", volume_multiplier: 0.85, finisher_enabled: false, recommendation_reason: "Imported recovery or sleep is moderate. Productive work, no failure chasing." };
+  return { readiness_level: "green", recommended_action: "Train as planned", recommended_rir: "1-2 RIR", volume_multiplier: 1, finisher_enabled: true, recommendation_reason: "Imported recovery and sleep are strong enough to execute the full plan." };
+}
+
+function csvRows(text) {
+  return String(text || "")
+    .split(/\r?\n/)
+    .map(splitCsvLine)
+    .filter((row) => row.some((cell) => cell.trim()));
+}
+
+function splitCsvLine(line) {
+  const cells = [];
+  let cell = "";
+  let quoted = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (char === '"' && line[index + 1] === '"') {
+      cell += '"';
+      index += 1;
+    } else if (char === '"') {
+      quoted = !quoted;
+    } else if (char === "," && !quoted) {
+      cells.push(cell.trim());
+      cell = "";
+    } else {
+      cell += char;
+    }
+  }
+  cells.push(cell.trim());
+  return cells;
+}
+
+function metricFromText(text, labels) {
+  const escaped = labels.map((label) => label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+  const match = String(text || "").match(new RegExp(`(?:${escaped})[^0-9-]{0,28}([0-9][0-9,.]*(?:\\.[0-9]+)?)`, "i"));
+  return match ? match[1] : "";
+}
+
+function numberFromAny(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(String(value).replace(/,/g, "").replace(/[^0-9.-]/g, ""));
+  return Number.isFinite(number) ? number : null;
+}
+
+function isoDateFromAny(value) {
+  const text = String(value || "").trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+  const date = new Date(text);
+  return Number.isNaN(date.getTime()) ? "" : toAppIsoDate(date);
+}
+
+function fileToText(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = reject;
+    reader.readAsText(file);
+  });
 }
 
 function setWhoopState(data) {
@@ -1048,6 +1143,8 @@ function resumeWorkout() {
 }
 
 function rememberExerciseHistory(active, exercise) {
+  const sets = active.sets.filter((set) => set.exerciseId === exercise.id);
+  if (!sets.length) return;
   state.exerciseHistory = state.exerciseHistory || {};
   const key = exerciseHistoryKey(active.workoutId, exercise.id);
   state.exerciseHistory[key] = {
@@ -1056,13 +1153,17 @@ function rememberExerciseHistory(active, exercise) {
     exerciseId: exercise.id,
     exerciseName: exercise.name,
     date: new Date().toISOString(),
-    sets: active.sets.filter((set) => set.exerciseId === exercise.id)
+    sets
   };
+  persistExerciseHistory();
 }
 
 function finishWorkout() {
   const active = state.activeWorkout;
   if (!active) return;
+  activeWorkoutExercises(getWorkout(active.workoutId), active).forEach((exercise) => {
+    rememberExerciseHistory(active, exercise);
+  });
   state.workoutLogs.unshift({
     id: active.id,
     workoutId: active.workoutId,
@@ -1314,7 +1415,7 @@ function renderNutrition() {
       </div>
     </div>
     <div class="section-panel panel energy-ledger ${energy.balanceClass}">
-      <div class="section-head"><h2>Energy Balance</h2><button class="link-button" data-action="whoop-sync">Sync WHOOP</button></div>
+      <div class="section-head"><h2>Energy Balance</h2><button class="link-button" data-route="more">Import WHOOP</button></div>
       <div class="stats-grid">
         ${statCard("Calories In", `${energy.caloriesIn} kcal`, "Food logged today")}
         ${statCard("Calories Out", energy.caloriesOut ? `${energy.caloriesOut} kcal` : "--", energy.outSource)}
@@ -1442,6 +1543,7 @@ function saveMealTemplate(meal) {
     state.savedMeals.unshift(savedMeal);
   }
   state.savedMeals = state.savedMeals.slice(0, 40);
+  persistSavedMeals();
 }
 
 function mealId(meal) {
@@ -1461,6 +1563,7 @@ function addSavedMealToToday(id) {
 
 function removeSavedMeal(id) {
   state.savedMeals = (state.savedMeals || []).filter((meal) => meal.id !== id);
+  persistSavedMeals();
   saveState();
   renderNutrition();
   showToast("Saved meal removed.");
@@ -1795,30 +1898,35 @@ function renderMore() {
 function whoopIntegrationPanel() {
   const whoop = normalizeWhoop(state.whoop);
   const readiness = whoop.readiness;
-  const connectedText = whoop.connected ? "Connected" : "Not connected";
+  const connectedText = readiness ? "Imported" : "No import yet";
   return `
     <div class="integration-row">
       <div>
         <strong>WHOOP</strong>
         <span>${connectedText}${whoop.lastSync ? ` · Last sync ${new Date(whoop.lastSync).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : ""}</span>
-        <p class="small">${readiness ? `${readiness.recommended_action}: ${readiness.recovery_score ?? "--"}% recovery, ${readiness.sleep_performance_percentage ?? "--"}% sleep.` : "Feeds recovery, sleep, strain, HRV, resting heart rate, and workouts into Adonis OS."}</p>
+        <p class="small">${readiness ? `${readiness.recommended_action}: ${readiness.recovery_score ?? "--"}% recovery, ${readiness.sleep_performance_percentage ?? "--"}% sleep, ${readiness.calories_burned ?? "--"} kcal burned.` : "Import a WHOOP CSV/text export or a screenshot. No WHOOP developer API credentials required."}</p>
       </div>
       <div class="pills">
         <span class="pill">Recovery</span>
         <span class="pill">Sleep</span>
         <span class="pill">Strain</span>
-        <span class="pill">Workouts</span>
+        <span class="pill">Energy</span>
       </div>
     </div>
-    <div class="button-row">
-      <button class="button primary" data-action="whoop-connect">${whoop.connected ? "Reconnect" : "Connect WHOOP"}</button>
-      <button class="button secondary" data-action="whoop-sync" data-days="30">Sync 30 Days</button>
-    </div>
+    <form id="whoop-import-form" class="label-scan-form">
+      <label class="file-drop">
+        <span>Import WHOOP CSV or Screenshot</span>
+        <small>Choose a CSV/text export, or a screenshot showing recovery, sleep, strain, calories, and steps.</small>
+        <input name="whoopFile" type="file" accept=".csv,.txt,text/csv,text/plain,image/*">
+      </label>
+      <div class="field"><label>Paste WHOOP Text</label><textarea name="whoopText" placeholder="Paste visible WHOOP stats here if you do not have a file."></textarea></div>
+      <button class="button primary" type="submit">Import WHOOP Data</button>
+    </form>
     <div class="button-row">
       <button class="button secondary" data-route="recovery">Recovery Details</button>
-      <button class="button secondary" data-action="whoop-disconnect">Disconnect</button>
+      <button class="button secondary" data-action="whoop-disconnect">Clear WHOOP</button>
     </div>
-    ${whoop.error ? `<p class="form-help danger-text">${escapeHtml(whoop.error)}</p>` : `<p class="form-help">Use the same app PIN saved above. Vercel needs the WHOOP and Supabase environment variables before connecting.</p>`}
+    ${whoop.error ? `<p class="form-help danger-text">${escapeHtml(whoop.error)}</p>` : `<p class="form-help">CSV/text imports run on-device. Screenshot import uses the OpenAI key already configured for photo reading.</p>`}
   `;
 }
 
@@ -1924,6 +2032,8 @@ function setWeek(week) {
 function resetData() {
   if (!confirm("Reset all Adonis OS data?")) return;
   localStorage.removeItem(STORAGE_KEY);
+  localStorage.removeItem(SAVED_MEALS_KEY);
+  localStorage.removeItem(EXERCISE_HISTORY_KEY);
   state = structuredClone(defaultState);
   saveState();
   route("home");
@@ -2031,17 +2141,32 @@ function weeklyNutritionTrend() {
   const daily = days.map((date) => macroTotals(foodsForDate(date)));
   const loggedDays = daily.filter((day) => day.calories > 0);
   const divisor = loggedDays.length || 1;
-  const avg = loggedDays.reduce((totals, day) => ({
-    calories: totals.calories + day.calories,
-    protein: totals.protein + day.protein,
-    carbs: totals.carbs + day.carbs,
-    fat: totals.fat + day.fat
+  const totals = loggedDays.reduce((sum, day) => ({
+    calories: sum.calories + day.calories,
+    protein: sum.protein + day.protein,
+    carbs: sum.carbs + day.carbs,
+    fat: sum.fat + day.fat
   }), { calories: 0, protein: 0, carbs: 0, fat: 0 });
+  const sevenDayTotals = daily.reduce((sum, day) => ({
+    calories: sum.calories + day.calories,
+    protein: sum.protein + day.protein,
+    carbs: sum.carbs + day.carbs,
+    fat: sum.fat + day.fat
+  }), { calories: 0, protein: 0, carbs: 0, fat: 0 });
+  const avg = {
+    calories: totals.calories / divisor,
+    protein: totals.protein / divisor,
+    carbs: totals.carbs / divisor,
+    fat: totals.fat / divisor
+  };
+  const calorieMeta = loggedDays.length
+    ? `${loggedDays.length}/7 logged · 7-day avg ${Math.round(sevenDayTotals.calories / 7)}`
+    : "No meals logged";
   return [
-    statCard("Avg Calories", `${Math.round(avg.calories / divisor)}`, `${loggedDays.length}/7 days logged`),
-    statCard("Avg Protein", `${Math.round(avg.protein / divisor)}g`, "Daily average"),
-    statCard("Avg Carbs", `${Math.round(avg.carbs / divisor)}g`, "Daily average"),
-    statCard("Avg Fat", `${Math.round(avg.fat / divisor)}g`, "Daily average")
+    statCard("Avg Calories", `${Math.round(avg.calories)}`, calorieMeta),
+    statCard("Avg Protein", `${Math.round(avg.protein)}g`, "Average of logged days"),
+    statCard("Avg Carbs", `${Math.round(avg.carbs)}g`, "Average of logged days"),
+    statCard("Avg Fat", `${Math.round(avg.fat)}g`, "Average of logged days")
   ].join("");
 }
 
@@ -2204,10 +2329,61 @@ function mergeSavedMeals(localMeals = [], remoteMeals = []) {
     .slice(0, 40);
 }
 
+function persistSavedMeals() {
+  localStorage.setItem(SAVED_MEALS_KEY, JSON.stringify(normalizeSavedMeals(state.savedMeals)));
+}
+
+function loadPersistedSavedMeals() {
+  try {
+    return normalizeSavedMeals(JSON.parse(localStorage.getItem(SAVED_MEALS_KEY)) || []);
+  } catch {
+    return [];
+  }
+}
+
+function mergeExerciseHistory(localHistory = {}, remoteHistory = {}) {
+  const merged = { ...(remoteHistory || {}) };
+  Object.entries(localHistory || {}).forEach(([key, history]) => {
+    const hasSets = Array.isArray(history?.sets) && history.sets.length;
+    if (!hasSets) return;
+    const existing = merged[key];
+    const existingHasSets = Array.isArray(existing?.sets) && existing.sets.length;
+    if (!existingHasSets || String(history.date || "") >= String(existing.date || "")) {
+      merged[key] = history;
+    }
+  });
+  return merged;
+}
+
+function persistExerciseHistory() {
+  localStorage.setItem(EXERCISE_HISTORY_KEY, JSON.stringify(state.exerciseHistory || {}));
+}
+
+function loadPersistedExerciseHistory() {
+  try {
+    return JSON.parse(localStorage.getItem(EXERCISE_HISTORY_KEY)) || {};
+  } catch {
+    return {};
+  }
+}
+
 function normalizeNutritionState(source = {}) {
   const today = todayIso();
   const yesterday = isoDaysAgo(1);
-  const logs = { ...(source.nutritionLogs || {}) };
+  const logs = {};
+  Object.entries(source.nutritionLogs || {}).forEach(([storedDate, meals]) => {
+    (Array.isArray(meals) ? meals : []).forEach((meal) => {
+      if (!meal || !meal.name) return;
+      const timestampDate = meal.loggedAt ? isoDateFromTimestamp(meal.loggedAt) : "";
+      const mealDate = timestampDate || meal.logDate || storedDate;
+      logs[mealDate] = logs[mealDate] || [];
+      logs[mealDate].push({
+        ...cleanMeal(meal),
+        logDate: mealDate,
+        loggedAt: meal.loggedAt || ""
+      });
+    });
+  });
   const activeDay = source.nutritionDay || "";
   const todayMeals = Array.isArray(logs[today]) ? logs[today] : [];
   const legacyTodayMeals = todayMeals.length > 0 && todayMeals.every((meal) => !meal.logDate && !meal.loggedAt);
@@ -2229,6 +2405,12 @@ function normalizeNutritionState(source = {}) {
 
   logs[today] = (logs[today] || []).filter((meal) => meal.logDate === today);
   return { nutritionLogs: logs, nutritionDay: today };
+}
+
+function isoDateFromTimestamp(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return toAppIsoDate(date);
 }
 
 function normalizeSettings(settings = {}) {
@@ -2279,16 +2461,18 @@ function loadState() {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
     if (!saved) return structuredClone(defaultState);
     const nutrition = normalizeNutritionState(saved);
+    const savedMeals = mergeSavedMeals(loadPersistedSavedMeals(), saved.savedMeals || []);
+    const exerciseHistory = mergeExerciseHistory(loadPersistedExerciseHistory(), saved.exerciseHistory || {});
     return {
       ...structuredClone(defaultState),
       ...saved,
       nutritionLogs: nutrition.nutritionLogs,
       nutritionDay: nutrition.nutritionDay,
       settings: normalizeSettings(saved.settings),
-      exerciseHistory: saved.exerciseHistory || {},
+      exerciseHistory,
       morningWeights: saved.morningWeights || seedMorningWeights(saved.progressLogs),
       activeWorkout: normalizeActiveWorkout(saved.activeWorkout),
-      savedMeals: normalizeSavedMeals(saved.savedMeals),
+      savedMeals,
       habitLogs: saved.habitLogs || {},
       whoop: normalizeWhoop(saved.whoop),
       coachMessages: saved.coachMessages?.length ? saved.coachMessages : structuredClone(defaultState.coachMessages)
@@ -2299,6 +2483,8 @@ function loadState() {
 }
 
 function saveState(options = {}) {
+  persistSavedMeals();
+  persistExerciseHistory();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   if (!options.localOnly) queueCloudSave();
 }
@@ -2391,16 +2577,24 @@ async function apiRequest(path, options = {}) {
 
 function hydrateState(nextState, currentState = null) {
   const nutrition = normalizeNutritionState(nextState);
+  const savedMeals = mergeSavedMeals(
+    loadPersistedSavedMeals(),
+    mergeSavedMeals(currentState?.savedMeals || [], nextState.savedMeals || [])
+  );
+  const exerciseHistory = mergeExerciseHistory(
+    loadPersistedExerciseHistory(),
+    mergeExerciseHistory(currentState?.exerciseHistory || {}, nextState.exerciseHistory || {})
+  );
   return {
     ...structuredClone(defaultState),
     ...nextState,
     nutritionLogs: nutrition.nutritionLogs,
     nutritionDay: nutrition.nutritionDay,
     settings: normalizeSettings(nextState.settings),
-    exerciseHistory: nextState.exerciseHistory || {},
+    exerciseHistory,
     morningWeights: nextState.morningWeights || seedMorningWeights(nextState.progressLogs),
     activeWorkout: normalizeActiveWorkout(nextState.activeWorkout),
-    savedMeals: mergeSavedMeals(currentState?.savedMeals || [], nextState.savedMeals || []),
+    savedMeals,
     habitLogs: nextState.habitLogs || {},
     whoop: normalizeWhoop(nextState.whoop),
     coachMessages: nextState.coachMessages?.length ? nextState.coachMessages : structuredClone(defaultState.coachMessages)

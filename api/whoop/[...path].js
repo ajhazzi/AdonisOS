@@ -1,35 +1,11 @@
-import { appOrigin, env, json, readJson, requirePin, requirePinValue } from "../_shared.js";
-import {
-  WHOOP_AUTH_URL,
-  WHOOP_SCOPES,
-  createOauthState,
-  disconnectWhoop,
-  exchangeCodeForTokens,
-  latestReadiness,
-  loadConnection,
-  logWebhook,
-  readinessHistory,
-  redirectUri,
-  refreshTokens,
-  saveConnection,
-  summarizeConnection,
-  syncWhoopData,
-  validateOauthState,
-  verifyWebhook,
-  whoopGet
-} from "../../server/whoop-service.js";
+import { env, json, readJson, requirePin } from "../_shared.js";
 
 export default async function handler(req, res) {
   const action = whoopAction(req);
-  if (action === "connect") return connect(req, res);
-  if (action === "callback") return callback(req, res);
-  if (action === "sync") return sync(req, res);
-  if (action === "refresh") return refresh(req, res);
-  if (action === "status") return status(req, res);
-  if (action === "latest") return latest(req, res);
-  if (action === "history") return history(req, res);
-  if (action === "disconnect") return disconnect(req, res);
-  if (action === "webhook") return webhook(req, res);
+  if (action === "import") return importWhoop(req, res);
+  if (["connect", "callback", "sync", "refresh", "status", "latest", "history", "disconnect", "webhook"].includes(action)) {
+    return json(res, 410, { error: "WHOOP API connection is disabled. Use manual WHOOP CSV/text or screenshot import in More." });
+  }
   return json(res, 404, { error: "WHOOP route not found" });
 }
 
@@ -40,136 +16,126 @@ function whoopAction(req) {
   return parts[whoopIndex + 1] || "";
 }
 
-async function connect(req, res) {
-  const url = new URL(req.url, `https://${req.headers.host}`);
-  const pin = url.searchParams.get("pin") || "";
-  if (!requirePinValue(pin)) return json(res, 401, { error: "Invalid app PIN" });
-
-  try {
-    const state = await createOauthState();
-    const auth = new URL(WHOOP_AUTH_URL);
-    auth.searchParams.set("client_id", env("WHOOP_CLIENT_ID"));
-    auth.searchParams.set("redirect_uri", redirectUri(req));
-    auth.searchParams.set("response_type", "code");
-    auth.searchParams.set("scope", WHOOP_SCOPES);
-    auth.searchParams.set("state", state);
-    res.statusCode = 302;
-    res.setHeader("Location", auth.toString());
-    res.end();
-  } catch (error) {
-    json(res, 500, { error: error.message || "WHOOP connect failed" });
-  }
-}
-
-async function callback(req, res) {
-  const url = new URL(req.url, `https://${req.headers.host}`);
-  const code = url.searchParams.get("code");
-  const state = url.searchParams.get("state");
-  const error = url.searchParams.get("error");
-  const home = `${appOrigin(req)}/?whoop=`;
-
-  try {
-    if (error) throw new Error(error);
-    if (!code || !state) throw new Error("Missing WHOOP authorization code.");
-    await validateOauthState(state);
-    const tokens = await exchangeCodeForTokens(code, req);
-    const profile = tokens.access_token ? await whoopGet("/user/profile/basic", tokens.access_token).catch(() => ({})) : {};
-    await saveConnection(tokens, profile);
-    await syncWhoopData(30).catch(() => null);
-    res.statusCode = 302;
-    res.setHeader("Location", `${home}connected`);
-    res.end();
-  } catch (err) {
-    res.statusCode = 302;
-    res.setHeader("Location", `${home}error&message=${encodeURIComponent(err.message || "WHOOP connection failed")}`);
-    res.end();
-  }
-}
-
-async function sync(req, res) {
+async function importWhoop(req, res) {
   if (req.method !== "POST") return json(res, 405, { error: "Method not allowed" });
   if (!requirePin(req, res)) return;
   try {
     const body = await readJson(req);
-    const readiness = await syncWhoopData(Number(body.days || 14));
+    const image = String(body.image || "");
+    if (!image.startsWith("data:image/")) return json(res, 400, { error: "Missing WHOOP screenshot image" });
+    const readiness = await readWhoopScreenshot(image);
     json(res, 200, { readiness });
   } catch (error) {
-    json(res, 500, { error: error.message || "WHOOP sync failed" });
+    json(res, 500, { error: error.message || "WHOOP screenshot import failed" });
   }
 }
 
-async function refresh(req, res) {
-  if (req.method !== "POST") return json(res, 405, { error: "Method not allowed" });
-  if (!requirePin(req, res)) return;
-  try {
-    await refreshTokens();
-    json(res, 200, { ok: true });
-  } catch (error) {
-    json(res, 500, { error: error.message || "WHOOP refresh failed" });
-  }
-}
-
-async function status(req, res) {
-  if (!requirePin(req, res)) return;
-  try {
-    json(res, 200, { connection: summarizeConnection(await loadConnection()) });
-  } catch (error) {
-    json(res, 500, { error: error.message || "WHOOP status failed" });
-  }
-}
-
-async function latest(req, res) {
-  if (!requirePin(req, res)) return;
-  try {
-    json(res, 200, await latestReadiness());
-  } catch (error) {
-    json(res, 500, { error: error.message || "WHOOP latest failed" });
-  }
-}
-
-async function history(req, res) {
-  if (!requirePin(req, res)) return;
-  const url = new URL(req.url, `https://${req.headers.host}`);
-  try {
-    json(res, 200, await readinessHistory(Number(url.searchParams.get("days") || 30)));
-  } catch (error) {
-    json(res, 500, { error: error.message || "WHOOP history failed" });
-  }
-}
-
-async function disconnect(req, res) {
-  if (req.method !== "DELETE" && req.method !== "POST") return json(res, 405, { error: "Method not allowed" });
-  if (!requirePin(req, res)) return;
-  try {
-    const body = req.method === "POST" ? await readJson(req) : {};
-    await disconnectWhoop(Boolean(body.deleteData));
-    json(res, 200, { ok: true });
-  } catch (error) {
-    json(res, 500, { error: error.message || "WHOOP disconnect failed" });
-  }
-}
-
-async function webhook(req, res) {
-  if (req.method !== "POST") return json(res, 405, { error: "Method not allowed" });
-  try {
-    const raw = await readRaw(req);
-    if (!verifyWebhook(req, raw)) return json(res, 401, { error: "Invalid WHOOP webhook signature" });
-    const event = raw ? JSON.parse(raw) : {};
-    await logWebhook(event, "received");
-    json(res, 200, { ok: true });
-    syncWhoopData(3).catch((error) => logWebhook(event, "failed", error.message));
-  } catch (error) {
-    json(res, 500, { error: error.message || "WHOOP webhook failed" });
-  }
-}
-
-function readRaw(req) {
-  return new Promise((resolve, reject) => {
-    let raw = "";
-    req.on("data", (chunk) => {
-      raw += chunk;
-    });
-    req.on("end", () => resolve(raw));
-    req.on("error", reject);
+async function readWhoopScreenshot(image) {
+  const model = process.env.OPENAI_MODEL || "gpt-5.5";
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${env("OPENAI_API_KEY")}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model,
+      text: {
+        format: {
+          type: "json_schema",
+          name: "whoop_import",
+          strict: true,
+          schema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["date", "recovery_score", "sleep_performance_percentage", "sleep_duration_hours", "hrv_rmssd", "resting_heart_rate", "cycle_strain", "calories_burned", "workout_calories", "steps"],
+            properties: {
+              date: { type: "string", description: "Date as YYYY-MM-DD if visible, otherwise empty string." },
+              recovery_score: { type: ["number", "null"] },
+              sleep_performance_percentage: { type: ["number", "null"] },
+              sleep_duration_hours: { type: ["number", "null"] },
+              hrv_rmssd: { type: ["number", "null"] },
+              resting_heart_rate: { type: ["number", "null"] },
+              cycle_strain: { type: ["number", "null"] },
+              calories_burned: { type: ["number", "null"], description: "Total daily calories burned if visible." },
+              workout_calories: { type: ["number", "null"], description: "Workout or activity calories if visible." },
+              steps: { type: ["number", "null"] }
+            }
+          }
+        }
+      },
+      input: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "input_text",
+              text: [
+                "Read this WHOOP screenshot and extract fitness metrics for Adonis OS.",
+                "Prefer daily total calories burned over workout calories for calories_burned.",
+                "If a metric is not visible, use null. Return numeric values only, no units."
+              ].join(" ")
+            },
+            { type: "input_image", image_url: image }
+          ]
+        }
+      ]
+    })
   });
+
+  const data = await response.json();
+  if (!response.ok) throw new Error(data?.error?.message || `OpenAI ${response.status}`);
+  return normalizeImportedWhoop(parseJson(extractText(data)));
+}
+
+function normalizeImportedWhoop(input = {}) {
+  const recoveryScore = numberOrNull(input.recovery_score);
+  const sleepPerformance = numberOrNull(input.sleep_performance_percentage);
+  return {
+    date: /^\d{4}-\d{2}-\d{2}$/.test(String(input.date || "")) ? input.date : new Date().toISOString().slice(0, 10),
+    recovery_score: recoveryScore,
+    sleep_performance_percentage: sleepPerformance,
+    sleep_duration_hours: numberOrNull(input.sleep_duration_hours),
+    hrv_rmssd: numberOrNull(input.hrv_rmssd),
+    resting_heart_rate: numberOrNull(input.resting_heart_rate),
+    cycle_strain: numberOrNull(input.cycle_strain),
+    calories_burned: numberOrNull(input.calories_burned),
+    workout_calories: numberOrNull(input.workout_calories),
+    steps: numberOrNull(input.steps),
+    source: "whoop-screenshot",
+    last_synced_at: new Date().toISOString(),
+    rules_version: "adonis-readiness-v1",
+    ...readinessRecommendation(recoveryScore, sleepPerformance)
+  };
+}
+
+function readinessRecommendation(recoveryScore, sleepPerformance) {
+  if (recoveryScore === null && sleepPerformance === null) return { readiness_level: "pending", recommended_action: "WHOOP screenshot imported", recommended_rir: "Use normal plan if you feel good", volume_multiplier: 1, finisher_enabled: false, recommendation_reason: "Screenshot did not include recovery or sleep score." };
+  const red = recoveryScore !== null && recoveryScore <= 33 || sleepPerformance !== null && sleepPerformance < 60;
+  const yellow = recoveryScore !== null && recoveryScore <= 66 || sleepPerformance !== null && sleepPerformance < 75;
+  if (red) return { readiness_level: "red", recommended_action: "Recovery-biased day", recommended_rir: "3+ RIR", volume_multiplier: 0.6, finisher_enabled: false, recommendation_reason: "Low imported recovery or poor sleep. Keep training conservative." };
+  if (yellow) return { readiness_level: "yellow", recommended_action: "Reduced volume", recommended_rir: "2-3 RIR", volume_multiplier: 0.85, finisher_enabled: false, recommendation_reason: "Imported recovery or sleep is moderate. Productive work, no failure chasing." };
+  return { readiness_level: "green", recommended_action: "Train as planned", recommended_rir: "1-2 RIR", volume_multiplier: 1, finisher_enabled: true, recommendation_reason: "Imported recovery and sleep are strong enough to execute the full plan." };
+}
+
+function extractText(data) {
+  if (typeof data.output_text === "string") return data.output_text.trim();
+  return (data.output || []).flatMap((item) => item.content || []).map((part) => part.text || "").join("\n").trim();
+}
+
+function parseJson(text) {
+  const trimmed = String(text || "").trim();
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    const match = trimmed.match(/\{[\s\S]*\}/);
+    if (!match) throw new Error("Could not read WHOOP screenshot.");
+    return JSON.parse(match[0]);
+  }
+}
+
+function numberOrNull(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(String(value).replace(/,/g, "").replace(/[^0-9.-]/g, ""));
+  return Number.isFinite(number) ? number : null;
 }

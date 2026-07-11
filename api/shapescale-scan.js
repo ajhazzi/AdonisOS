@@ -59,6 +59,32 @@ async function readShapeScale({ fileData, filename, reportText }) {
     },
     body: JSON.stringify({
       model,
+      text: {
+        format: {
+          type: "json_schema",
+          name: "shapescale_scan",
+          strict: true,
+          schema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["date", "weight", "waist", "shoulders", "arms", "biceps", "hips", "thighs", "neck", "calves", "bodyFat", "leanMass"],
+            properties: {
+              date: { type: "string", description: "Scan date as YYYY-MM-DD if visible, otherwise empty string." },
+              weight: { type: ["number", "null"] },
+              waist: { type: ["number", "null"] },
+              shoulders: { type: ["number", "null"] },
+              arms: { type: ["number", "null"] },
+              biceps: { type: ["number", "null"] },
+              hips: { type: ["number", "null"] },
+              thighs: { type: ["number", "null"] },
+              neck: { type: ["number", "null"] },
+              calves: { type: ["number", "null"] },
+              bodyFat: { type: ["number", "null"] },
+              leanMass: { type: ["number", "null"] }
+            }
+          }
+        }
+      },
       input: [{ role: "user", content }]
     })
   });
