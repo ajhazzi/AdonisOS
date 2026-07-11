@@ -130,12 +130,13 @@ const defaultState = {
   workoutLogs: [],
   exerciseHistory: {},
   progressLogs: [
-    entryDaysAgo(8, { weight: 181.2, waist: 33.7, shoulders: 47.0, arms: 15.4, biceps: 15.4, hips: 40.0, thighs: 23.0, neck: 16.0, calves: 15.0, bodyFat: 11.6, leanMass: 160.2, source: "Manual", notes: "Baseline check." }),
-    entryDaysAgo(1, { weight: 180.0, waist: 33.4, shoulders: 47.2, arms: 15.6, biceps: 15.6, hips: 40.1, thighs: 23.1, neck: 16.1, calves: 15.1, bodyFat: 11.1, leanMass: 160.0, source: "Manual", notes: "On track. Waist moving right." })
+    realProgressEntry("2026-06-24", { weight: 177.4, waist: 33.7, bodyFat: 13.6, source: "ShapeScale", notes: "Lowest verified body-fat reading." }),
+    realProgressEntry("2026-05-03", { weight: 187.0, waist: 35.6, bodyFat: 17.2, source: "Manual", notes: "Real starting baseline." })
   ],
   morningWeights: [
-    entryDaysAgo(8, { weight: 181.2, notes: "Baseline morning weight." }),
-    entryDaysAgo(1, { weight: 180.0, notes: "Morning weigh-in." })
+    { date: "2026-07-06", weight: 174.9, notes: "Most recent ShapeScale weight." },
+    { date: "2026-06-24", weight: 177.4, notes: "Lowest verified body-fat reading." },
+    { date: "2026-05-03", weight: 187.0, notes: "Real starting baseline." }
   ],
   nutritionLogs: {},
   nutritionDay: todayIso(),
@@ -390,8 +391,8 @@ function renderHome() {
       <div class="stats-grid">
         ${statCard("Weight", `${fmt(currentWeight.weight)} lbs`, changeText(currentWeight.weight, previousWeight?.weight, "lb"))}
         ${statCard("Waist", `${fmt(latest.waist)}"`, changeText(latest.waist, previous?.waist, "\"", true))}
-        ${statCard("Ratio", ratio, "Shoulder-to-waist")}
-        ${statCard("Adonis Score", `${score}%`, score >= 80 ? "On Track" : "Build Phase")}
+        ${statCard("Ratio", ratio, ratio === "--" ? "Needs shoulders" : "Shoulder-to-waist")}
+        ${statCard("Adonis Score", score === "--" ? "--" : `${score}%`, score === "--" ? "Needs shoulders" : score >= 80 ? "On Track" : "Build Phase")}
       </div>
     </div>
     <div class="mission panel">
@@ -1077,11 +1078,17 @@ function saveSet(formData) {
   if (!exercise) return;
   const setIndex = formData.get("setIndex") === "" ? null : Number(formData.get("setIndex"));
   const mode = formData.get("saveMode") || "one";
+  const weight = Number(formData.get("weight"));
+  const reps = Number(formData.get("reps"));
+  if (!Number.isFinite(weight) || !Number.isFinite(reps) || reps <= 0) {
+    showToast("Enter a valid weight and reps before saving.");
+    return;
+  }
   const baseSet = {
     exerciseId: exercise.id,
     exerciseName: exercise.name,
-    weight: Number(formData.get("weight")),
-    reps: Number(formData.get("reps")),
+    weight,
+    reps,
     notes: String(formData.get("notes") || "").trim(),
     loggedAt: new Date().toISOString()
   };
@@ -1161,6 +1168,11 @@ function rememberExerciseHistory(active, exercise) {
 function finishWorkout() {
   const active = state.activeWorkout;
   if (!active) return;
+  if (!active.sets?.length) {
+    showToast("No sets logged yet. Log at least one set before finishing.");
+    route("active");
+    return;
+  }
   activeWorkoutExercises(getWorkout(active.workoutId), active).forEach((exercise) => {
     rememberExerciseHistory(active, exercise);
   });
@@ -1392,7 +1404,6 @@ function renderNutrition() {
   const foods = foodsForDate(date);
   const savedMeals = state.savedMeals || [];
   const totals = macroTotals(foods);
-  const energy = dailyEnergyLedger(totals);
   const targets = state.settings;
   byId("screen-nutrition").innerHTML = `
     <div class="hero-card">
@@ -1413,16 +1424,6 @@ function renderNutrition() {
         ${bar("Carbs", totals.carbs, targets.carbTarget, "green")}
         ${bar("Fat", totals.fat, targets.fatTarget, "orange")}
       </div>
-    </div>
-    <div class="section-panel panel energy-ledger ${energy.balanceClass}">
-      <div class="section-head"><h2>Energy Balance</h2><button class="link-button" data-route="more">Import WHOOP</button></div>
-      <div class="stats-grid">
-        ${statCard("Calories In", `${energy.caloriesIn} kcal`, "Food logged today")}
-        ${statCard("Calories Out", energy.caloriesOut ? `${energy.caloriesOut} kcal` : "--", energy.outSource)}
-        ${statCard("Balance", energy.balanceText, energy.balanceLabel)}
-        ${statCard("Steps", energy.steps ? energy.steps.toLocaleString() : "--", "WHOOP if available")}
-      </div>
-      <p class="form-help">${energy.note}</p>
     </div>
     <div class="section-panel panel">
       <div class="section-head"><h2>Add Food</h2><span class="small">${date}</span></div>
@@ -1946,8 +1947,10 @@ function habitPanel(date) {
   const log = getHabitLog(date);
   const numberHabits = habits.filter((habit) => habit.type === "number");
   const checkHabits = habits.filter((habit) => habit.type === "check");
+  const completeCount = habits.filter((habit) => habitComplete(habit, log)).length;
   return `
     <form id="habit-form" class="habit-form">
+      <div class="section-head compact"><h2>Basics + Supplements</h2><span class="small">${completeCount}/${habits.length} done</span></div>
       <div class="habit-number-grid">
       ${numberHabits.map((habit) => `
         <div class="habit-card">
@@ -1963,6 +1966,7 @@ function habitPanel(date) {
         </div>
       `).join("")}
       </div>
+      <button class="button primary habit-save" type="submit">Save Daily Habits</button>
       <div class="section-head compact"><h2>Supplements</h2><span class="small">${checkHabits.filter((habit) => log[habit.id]).length}/${checkHabits.length} done</span></div>
       <div class="habit-check-grid">
         ${checkHabits.map((habit) => {
@@ -1976,7 +1980,7 @@ function habitPanel(date) {
           `;
         }).join("")}
       </div>
-      <button class="button secondary habit-save" type="submit">Save Habits</button>
+      <button class="button secondary habit-save" type="submit">Save Daily Habits</button>
     </form>
   `;
 }
@@ -2107,7 +2111,13 @@ function statCard(label, main, change) {
 }
 
 function progressRow(entry) {
-  return `<div class="history-row"><strong>${entry.date} ${entry.source ? `<span class="source-tag">${entry.source}</span>` : ""}</strong><div class="meta">${fmt(entry.weight)} lb · ${fmt(entry.waist)}" waist · ${fmt(entry.shoulders)}" shoulders · ${fmt(entry.bodyFat)}% BF</div>${entry.notes ? `<div class="small">${entry.notes}</div>` : ""}</div>`;
+  const metrics = [
+    entry.weight ? `${fmt(entry.weight)} lb` : "",
+    entry.waist ? `${fmt(entry.waist)}" waist` : "",
+    entry.shoulders ? `${fmt(entry.shoulders)}" shoulders` : "",
+    entry.bodyFat ? `${fmt(entry.bodyFat)}% BF` : ""
+  ].filter(Boolean).join(" · ");
+  return `<div class="history-row"><strong>${entry.date} ${entry.source ? `<span class="source-tag">${entry.source}</span>` : ""}</strong><div class="meta">${metrics || "No measurements"}</div>${entry.notes ? `<div class="small">${entry.notes}</div>` : ""}</div>`;
 }
 
 function morningWeightRow(entry) {
@@ -2197,7 +2207,29 @@ function dailyEnergyLedger(totals) {
 }
 
 function foodsForDate(date) {
-  return (state.nutritionLogs[date] || []).filter((meal) => !meal.logDate || meal.logDate === date);
+  const meals = Object.values(state.nutritionLogs || {})
+    .flatMap((items) => Array.isArray(items) ? items : [])
+    .filter((meal) => meal && meal.name)
+    .filter((meal) => (meal.logDate || isoDateFromTimestamp(meal.loggedAt)) === date);
+  return dedupeMeals(meals);
+}
+
+function dedupeMeals(meals = []) {
+  const seen = new Set();
+  return meals.filter((meal) => {
+    const key = [
+      meal.logDate || "",
+      String(meal.name || "").toLowerCase().trim(),
+      Number(meal.calories || 0),
+      Number(meal.protein || 0),
+      Number(meal.carbs || 0),
+      Number(meal.fat || 0),
+      meal.loggedAt || ""
+    ].join("|");
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function bar(label, current, target, tone) {
@@ -2272,10 +2304,11 @@ function sevenDayAverage() {
 }
 
 function ratioText(entry) {
-  return entry.waist ? (Number(entry.shoulders) / Number(entry.waist)).toFixed(2) : "0.00";
+  return entry.waist && entry.shoulders ? (Number(entry.shoulders) / Number(entry.waist)).toFixed(2) : "--";
 }
 
 function adonisScore(entry) {
+  if (!entry.waist || !entry.shoulders || !entry.bodyFat) return "--";
   const ratio = Number(ratioText(entry));
   const waistScore = Math.max(0, Math.min(35, ((34.5 - Number(entry.waist)) / 1.5) * 35));
   const shoulderScore = Math.max(0, Math.min(30, ((Number(entry.shoulders) - 45) / 3) * 30));
@@ -2301,10 +2334,91 @@ function macroTotals(foods) {
   }), { calories: 0, protein: 0, carbs: 0, fat: 0 });
 }
 
+function realProgressEntry(date, data) {
+  const bodyFat = Number(data.bodyFat || 0);
+  const weight = Number(data.weight || 0);
+  return {
+    date,
+    weight,
+    waist: data.waist ?? "",
+    shoulders: data.shoulders ?? "",
+    arms: data.arms ?? "",
+    biceps: data.biceps ?? "",
+    hips: data.hips ?? "",
+    thighs: data.thighs ?? "",
+    neck: data.neck ?? "",
+    calves: data.calves ?? "",
+    bodyFat: data.bodyFat ?? "",
+    leanMass: bodyFat && weight ? round1(weight * (1 - bodyFat / 100)) : "",
+    source: data.source || "Manual",
+    notes: data.notes || ""
+  };
+}
+
+function realProgressSeed() {
+  return [
+    realProgressEntry("2026-06-24", { weight: 177.4, waist: 33.7, bodyFat: 13.6, source: "ShapeScale", notes: "Lowest verified body-fat reading." }),
+    realProgressEntry("2026-05-03", { weight: 187.0, waist: 35.6, bodyFat: 17.2, source: "Manual", notes: "Real starting baseline." })
+  ];
+}
+
+function realMorningWeightSeed() {
+  return [
+    { date: "2026-07-06", weight: 174.9, notes: "Most recent ShapeScale weight." },
+    { date: "2026-06-24", weight: 177.4, notes: "Lowest verified body-fat reading." },
+    { date: "2026-05-03", weight: 187.0, notes: "Real starting baseline." }
+  ];
+}
+
+function normalizeProgressLogs(logs = []) {
+  const fakeNotes = ["Baseline check.", "On track. Waist moving right."];
+  const cleaned = (Array.isArray(logs) ? logs : [])
+    .filter((entry) => entry?.date)
+    .filter((entry) => !fakeNotes.includes(String(entry.notes || "")))
+    .filter((entry) => !(entry.source === "Manual" && Number(entry.bodyFat) < 13 && Number(entry.weight) >= 180))
+    .map((entry) => ({ ...entry }));
+
+  realProgressSeed().forEach((realEntry) => {
+    const existingIndex = cleaned.findIndex((entry) => entry.date === realEntry.date);
+    if (existingIndex >= 0) cleaned[existingIndex] = { ...cleaned[existingIndex], ...realEntry };
+    else cleaned.push(realEntry);
+  });
+
+  return cleaned.sort((a, b) => String(b.date).localeCompare(String(a.date)));
+}
+
 function seedMorningWeights(progressLogs = defaultState.progressLogs) {
   return (progressLogs || [])
     .filter((entry) => entry.date && entry.weight)
     .map((entry) => ({ date: entry.date, weight: Number(entry.weight), notes: entry.source === "ShapeScale" ? "Seeded from ShapeScale import." : "Seeded from progress history." }));
+}
+
+function normalizeMorningWeights(weights = [], progressLogs = defaultState.progressLogs) {
+  const fakeNotes = ["Baseline morning weight.", "Morning weigh-in."];
+  const cleaned = (Array.isArray(weights) ? weights : [])
+    .filter((entry) => entry?.date)
+    .filter((entry) => !fakeNotes.includes(String(entry.notes || "")))
+    .filter((entry) => !(Number(entry.weight) >= 180 && Number(entry.weight) <= 182 && String(entry.notes || "").includes("Morning")))
+    .map((entry) => ({ ...entry, weight: Number(entry.weight || 0) }));
+
+  realMorningWeightSeed().forEach((realEntry) => {
+    const existingIndex = cleaned.findIndex((entry) => entry.date === realEntry.date);
+    if (existingIndex >= 0) cleaned[existingIndex] = { ...cleaned[existingIndex], ...realEntry };
+    else cleaned.push(realEntry);
+  });
+
+  const normalized = cleaned.length ? cleaned : seedMorningWeights(progressLogs);
+  return normalized.sort((a, b) => String(b.date).localeCompare(String(a.date)));
+}
+
+function normalizeWorkoutLogs(logs = []) {
+  return (Array.isArray(logs) ? logs : [])
+    .map((log) => ({
+      ...log,
+      sets: Array.isArray(log.sets) ? log.sets.filter((set) => set?.exerciseId && Number(set.reps) > 0) : []
+    }))
+    .filter((log) => log.id && log.workoutId && log.date && log.sets.length)
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)));
 }
 
 function normalizeSavedMeals(meals = []) {
@@ -2375,7 +2489,7 @@ function normalizeNutritionState(source = {}) {
     (Array.isArray(meals) ? meals : []).forEach((meal) => {
       if (!meal || !meal.name) return;
       const timestampDate = meal.loggedAt ? isoDateFromTimestamp(meal.loggedAt) : "";
-      const mealDate = timestampDate || meal.logDate || storedDate;
+      const mealDate = meal.logDate || timestampDate || storedDate;
       logs[mealDate] = logs[mealDate] || [];
       logs[mealDate].push({
         ...cleanMeal(meal),
@@ -2461,16 +2575,20 @@ function loadState() {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
     if (!saved) return structuredClone(defaultState);
     const nutrition = normalizeNutritionState(saved);
+    const progressLogs = normalizeProgressLogs(saved.progressLogs);
     const savedMeals = mergeSavedMeals(loadPersistedSavedMeals(), saved.savedMeals || []);
     const exerciseHistory = mergeExerciseHistory(loadPersistedExerciseHistory(), saved.exerciseHistory || {});
+    const workoutLogs = normalizeWorkoutLogs(saved.workoutLogs);
     return {
       ...structuredClone(defaultState),
       ...saved,
+      workoutLogs,
+      progressLogs,
       nutritionLogs: nutrition.nutritionLogs,
       nutritionDay: nutrition.nutritionDay,
       settings: normalizeSettings(saved.settings),
       exerciseHistory,
-      morningWeights: saved.morningWeights || seedMorningWeights(saved.progressLogs),
+      morningWeights: normalizeMorningWeights(saved.morningWeights, progressLogs),
       activeWorkout: normalizeActiveWorkout(saved.activeWorkout),
       savedMeals,
       habitLogs: saved.habitLogs || {},
@@ -2577,6 +2695,8 @@ async function apiRequest(path, options = {}) {
 
 function hydrateState(nextState, currentState = null) {
   const nutrition = normalizeNutritionState(nextState);
+  const progressLogs = normalizeProgressLogs(nextState.progressLogs);
+  const workoutLogs = normalizeWorkoutLogs(nextState.workoutLogs);
   const savedMeals = mergeSavedMeals(
     loadPersistedSavedMeals(),
     mergeSavedMeals(currentState?.savedMeals || [], nextState.savedMeals || [])
@@ -2588,11 +2708,13 @@ function hydrateState(nextState, currentState = null) {
   return {
     ...structuredClone(defaultState),
     ...nextState,
+    workoutLogs,
+    progressLogs,
     nutritionLogs: nutrition.nutritionLogs,
     nutritionDay: nutrition.nutritionDay,
     settings: normalizeSettings(nextState.settings),
     exerciseHistory,
-    morningWeights: nextState.morningWeights || seedMorningWeights(nextState.progressLogs),
+    morningWeights: normalizeMorningWeights(nextState.morningWeights, progressLogs),
     activeWorkout: normalizeActiveWorkout(nextState.activeWorkout),
     savedMeals,
     habitLogs: nextState.habitLogs || {},
@@ -2639,6 +2761,7 @@ function escapeTextarea(value) {
 }
 
 function fmt(value) {
+  if (value === "" || value === null || value === undefined || Number.isNaN(Number(value))) return "--";
   return Number(value || 0).toFixed(1).replace(".0", "");
 }
 
