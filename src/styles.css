@@ -1031,6 +1031,12 @@ button {
   font-size: 0.84rem;
 }
 
+.previous-set {
+  border: 1px solid rgba(255, 122, 0, 0.24);
+  background: rgba(255, 122, 0, 0.08);
+  color: #ffd2aa;
+}
+
 .mini-link {
   min-height: 32px;
   border: 1px solid var(--line);

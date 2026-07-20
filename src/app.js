@@ -969,6 +969,11 @@ function activeExerciseCard(workout, exercise, active) {
     .map((set, index) => ({ set, index }))
     .filter((item) => item.set.exerciseId === exercise.id);
   const last = lastExerciseSets(workout.id, exercise.id, { excludeSessionId: active.id });
+  const lastSetLines = last?.length ? last.map((set, index) => `
+    <div class="set-line previous-set">
+      <span>Last Set ${index + 1}: ${set.weight} lb × ${set.reps}</span>
+    </div>
+  `).join("") : "";
   return `
     <div class="exercise-card">
       <div class="exercise-head">
@@ -992,7 +997,7 @@ function activeExerciseCard(workout, exercise, active) {
             <span>Set ${setNumber + 1}: ${set.weight} lb × ${set.reps}</span>
             <button class="mini-link" data-edit-set="${index}" data-exercise-id="${exercise.id}">Edit</button>
           </div>
-        `).join("") : `<div class="small">No sets logged yet.</div>`}
+        `).join("") : lastSetLines || `<div class="small">No sets logged yet.</div>`}
       </div>
     </div>
   `;
@@ -1082,7 +1087,6 @@ function saveExerciseEdit(formData) {
   active.exerciseOverrides = active.exerciseOverrides || {};
   active.exerciseOverrides[exerciseId] = edited;
   active.sets = active.sets.map((set) => set.exerciseId === exerciseId ? { ...set, exerciseName: edited.name } : set);
-  rememberExerciseHistory(active, edited);
   saveState();
   closeModal();
   renderActiveWorkout();
@@ -1135,7 +1139,6 @@ function saveSet(formData) {
     active.sets.push(baseSet);
   }
 
-  rememberExerciseHistory(active, exercise);
   if (isWorkoutPaused(active)) {
     active.restRemainingSec = exercise.restSec;
     active.restEndAt = null;
@@ -2285,12 +2288,13 @@ function exerciseHistoryKey(workoutId, exerciseId) {
 }
 
 function lastExerciseSets(workoutId, exerciseId, options = {}) {
-  const history = state.exerciseHistory?.[exerciseHistoryKey(workoutId, exerciseId)];
-  if (history?.sets?.length && history.sessionId !== options.excludeSessionId) return history.sets.map((set) => ({ ...set }));
   const log = [...(state.workoutLogs || [])]
     .filter((item) => item.id !== options.excludeSessionId && item.workoutId === workoutId && item.sets.some((set) => set.exerciseId === exerciseId))
     .sort((a, b) => String(b.date).localeCompare(String(a.date)))[0];
-  return log ? log.sets.filter((set) => set.exerciseId === exerciseId) : null;
+  if (log) return log.sets.filter((set) => set.exerciseId === exerciseId);
+  const history = state.exerciseHistory?.[exerciseHistoryKey(workoutId, exerciseId)];
+  if (history?.sets?.length && history.sessionId !== options.excludeSessionId) return history.sets.map((set) => ({ ...set }));
+  return null;
 }
 
 function getWorkout(id) {
